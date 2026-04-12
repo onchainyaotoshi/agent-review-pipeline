@@ -12,7 +12,7 @@ Run a 2-stage review pipeline (correctness + adversarial) powered by Codex, with
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `maxIterations` | `3` | Max auto-fix iterations per review stage before escalating |
+| `maxIterations` | `3` | Max auto-fix iterations per review stage before escalating (`0` = unlimited) |
 | `failOnError` | `false` | Abort pipeline on first stage that can't PASS (instead of escalating) |
 
 **Set globally** via plugin config:
@@ -22,13 +22,14 @@ Run a 2-stage review pipeline (correctness + adversarial) powered by Codex, with
 
 **Override per-run** via CLI flags:
 ```
-/codex-review-pipeline -n 5 42
-/codex-review-pipeline --max-iterations 5 42
+/codex-review-pipeline -n 5 42       # max 5 iterations per stage
+/codex-review-pipeline -n 0 42       # yolo mode — run until PASS, no limit
+/codex-review-pipeline 42            # default (3)
 ```
 
 | Flag | Alias | Description |
 |------|-------|-------------|
-| `--max-iterations N` | `-n N` | Max auto-fix iterations per stage |
+| `--max-iterations N` | `-n N` | Max auto-fix iterations per stage (`0` = unlimited) |
 
 CLI flags take precedence over plugin config.
 
@@ -133,7 +134,7 @@ All fixes applied. Ready to test.
 1. **Use Codex review commands** — `/codex:review` for correctness, `/codex:adversarial-review` for adversarial. Do NOT use `codex:codex-rescue` for review work.
 2. **Auto-fix within the pipeline** — Unlike standalone review mode (which stops and asks the user), this pipeline auto-fixes all issues inline and re-runs. This overrides the default `codex-result-handling` behavior because the user explicitly invoked the pipeline.
 3. **Never skip adversarial** — A PASS on correctness does not mean the code is safe. Adversarial catches bugs that correctness review misses.
-4. **Max iterations per step** — Default 3, configurable via `maxIterations` in plugin config or `--max-iterations N` flag. If still failing after N fix attempts: if `failOnError` is true, abort pipeline; otherwise, stop and escalate to the user with a list of remaining issues.
+4. **Max iterations per step** — Default 3, configurable via `maxIterations` in plugin config or `-n` flag. Set `0` for unlimited (yolo mode — runs until PASS, no escalation). Otherwise, if still failing after N fix attempts: if `failOnError` is true, abort pipeline; otherwise, stop and escalate to the user with a list of remaining issues.
 5. **Scope per step** — Only include relevant files, not the entire codebase. More focused = more accurate review.
 6. **Deliver with summary** — After both pass, tell the user: what was reviewed, iteration counts per stage, what was fixed.
 
