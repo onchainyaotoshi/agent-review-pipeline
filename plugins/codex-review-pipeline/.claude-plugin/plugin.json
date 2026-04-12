@@ -1,10 +1,22 @@
 {
   "name": "codex-review-pipeline",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "2-stage code review pipeline (correctness + adversarial) via Codex — auto-fix loop until PASS",
   "author": {
     "name": "Yaotoshi",
     "url": "https://github.com/onchainyaotoshi"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "userConfig": {
+    "maxIterations": {
+      "type": "number",
+      "default": 3,
+      "description": "Max auto-fix iterations per review stage before escalating to user"
+    },
+    "failOnError": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, abort pipeline on first stage that can't PASS within maxIterations instead of escalating"
+    }
+  }
 }

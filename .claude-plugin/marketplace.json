@@ -11,7 +11,7 @@
     {
       "name": "codex-review-pipeline",
       "description": "Automated 2-stage code review pipeline (correctness + adversarial) powered by Codex",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "author": {
         "name": "Yaotoshi",
         "url": "https://github.com/onchainyaotoshi"

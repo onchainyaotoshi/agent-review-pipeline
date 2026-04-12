@@ -1,12 +1,31 @@
 ---
 name: codex-review-pipeline
 description: 2-stage code review pipeline (correctness + adversarial) via Codex with auto-fix loop — run when user asks to review a PR, check code, or validate before commit
-argument-hint: "[PR number | files or scope to review]"
+argument-hint: "[--max-iterations N] [PR number | files or scope to review]"
 ---
 
 # Codex Review Pipeline
 
 Run a 2-stage review pipeline (correctness + adversarial) powered by Codex, with automatic fix-and-retry until all reviews pass. Fully automatic — no manual trigger per stage.
+
+## Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxIterations` | `3` | Max auto-fix iterations per review stage before escalating |
+| `failOnError` | `false` | Abort pipeline on first stage that can't PASS (instead of escalating) |
+
+**Set globally** via plugin config:
+```
+/plugin config codex-review-pipeline
+```
+
+**Override per-run** via argument:
+```
+/codex-review-pipeline --max-iterations 5 42
+```
+
+CLI flags take precedence over plugin config.
 
 ## Prerequisites
 
@@ -32,13 +51,13 @@ If the Codex plugin is not installed, inform the user and stop.
 │ 1. /codex:review     │ ← correctness: logic, null checks, missing functions
 │    (auto-fix loop)   │
 └────────┬────────────┘
-         │ issues? → fix → re-run (max 3x)
+         │ issues? → fix → re-run (max N)
          │ PASS ↓
 ┌─────────────────────┐
 │ 2. /codex:adversarial-review │ ← break it: edge cases, data loss, race conditions
 │    (auto-fix loop)            │
 └────────┬─────────────────────┘
-         │ issues? → fix → re-run (max 3x)
+         │ issues? → fix → re-run (max N)
          │ PASS ↓
 ┌─────────────────────┐
 │   3. DELIVER         │ ← summary with iteration counts and all fixes applied
@@ -47,9 +66,13 @@ If the Codex plugin is not installed, inform the user and stop.
 
 ## How to Run
 
-### Step 0: Input Resolution
+### Step 0: Parse Arguments & Resolve Input
 
-Determine what to review based on the argument:
+**Parse CLI flags** from the argument string:
+- `--max-iterations N` — override `maxIterations` for this run
+- Everything else is treated as the review target
+
+**Determine what to review:**
 
 | Argument | Action |
 |----------|--------|
@@ -66,7 +89,7 @@ Run `/codex:review` on the resolved files.
 1. Read each finding (severity, file, line, recommendation)
 2. Fix all issues using Edit tool
 3. Re-run `/codex:review` on the same files
-4. Repeat until PASS (max 3 iterations)
+4. Repeat until PASS (max `maxIterations`)
 
 **If PASS:** advance to Step 2.
 
@@ -78,7 +101,7 @@ Run `/codex:adversarial-review` on the same files.
 1. Read each finding (severity, confidence, file, line, recommendation)
 2. Fix all issues using Edit tool
 3. Re-run `/codex:adversarial-review` on the same files
-4. Repeat until PASS (max 3 iterations)
+4. Repeat until PASS (max `maxIterations`)
 
 **If PASS:** advance to Step 3.
 
@@ -105,7 +128,7 @@ All fixes applied. Ready to test.
 1. **Use Codex review commands** — `/codex:review` for correctness, `/codex:adversarial-review` for adversarial. Do NOT use `codex:codex-rescue` for review work.
 2. **Auto-fix within the pipeline** — Unlike standalone review mode (which stops and asks the user), this pipeline auto-fixes all issues inline and re-runs. This overrides the default `codex-result-handling` behavior because the user explicitly invoked the pipeline.
 3. **Never skip adversarial** — A PASS on correctness does not mean the code is safe. Adversarial catches bugs that correctness review misses.
-4. **Max 3 iterations per step** — If still failing after 3 fix attempts, stop and escalate to the user with a list of remaining issues.
+4. **Max iterations per step** — Default 3, configurable via `maxIterations` in plugin config or `--max-iterations N` flag. If still failing after N fix attempts: if `failOnError` is true, abort pipeline; otherwise, stop and escalate to the user with a list of remaining issues.
 5. **Scope per step** — Only include relevant files, not the entire codebase. More focused = more accurate review.
 6. **Deliver with summary** — After both pass, tell the user: what was reviewed, iteration counts per stage, what was fixed.
 
