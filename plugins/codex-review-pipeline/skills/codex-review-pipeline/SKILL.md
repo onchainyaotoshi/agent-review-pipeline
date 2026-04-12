@@ -85,7 +85,14 @@ If the Codex plugin is not installed, inform the user and stop.
 | PR number (e.g. `42`) | Run `gh pr diff <number>` to get changed files, then review those |
 | Branch name | Run `git diff main...<branch>` to get changed files |
 | File paths | Review those files directly |
-| No argument | Run `git diff --name-only main...HEAD` on the current branch |
+| No argument | Auto-detect via `gh` (see below) |
+
+**Auto-detect (no argument):**
+
+1. Run `gh pr list --state open --json number,title,headRefName`
+2. **If 0 open PRs** → Run `git diff --name-only main...HEAD` on the current branch instead
+3. **If 1 open PR** → Use that PR automatically
+4. **If 2+ open PRs** → Show the list and ask the user which PR to review
 
 ### Step 1: Correctness Review
 
