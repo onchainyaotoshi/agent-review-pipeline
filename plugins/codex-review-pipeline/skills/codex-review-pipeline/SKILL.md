@@ -1,7 +1,7 @@
 ---
 name: codex-review-pipeline
 description: 2-stage code review pipeline (correctness + adversarial) via Codex with auto-fix loop — run when user asks to review a PR, check code, or validate before commit
-argument-hint: "[--max-iterations N] [PR number | files or scope to review]"
+argument-hint: "[-n N] [PR number | files or scope to review]"
 ---
 
 # Codex Review Pipeline
@@ -20,10 +20,15 @@ Run a 2-stage review pipeline (correctness + adversarial) powered by Codex, with
 /plugin config codex-review-pipeline
 ```
 
-**Override per-run** via argument:
+**Override per-run** via CLI flags:
 ```
+/codex-review-pipeline -n 5 42
 /codex-review-pipeline --max-iterations 5 42
 ```
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--max-iterations N` | `-n N` | Max auto-fix iterations per stage |
 
 CLI flags take precedence over plugin config.
 
@@ -69,7 +74,7 @@ If the Codex plugin is not installed, inform the user and stop.
 ### Step 0: Parse Arguments & Resolve Input
 
 **Parse CLI flags** from the argument string:
-- `--max-iterations N` — override `maxIterations` for this run
+- `-n N` or `--max-iterations N` — override `maxIterations` for this run
 - Everything else is treated as the review target
 
 **Determine what to review:**
