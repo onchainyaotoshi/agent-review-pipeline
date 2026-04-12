@@ -168,17 +168,22 @@ Present a summary to the user:
 ```
 Codex Review Pipeline: PASS
 
-Correctness (N iterations):
+Correctness (N/max iterations):
 - Fix 1: [description]
 
-Impact Analysis (N iterations):
+Impact Analysis (N/max iterations):
 - Checked N dependent files — SAFE / Fix 1: [description]
 
-Adversarial (N iterations):
+Adversarial (N/max iterations):
 - Fix 1: [description]
 
 All fixes applied. Ready to test.
 ```
+
+`N/max` format: N = actual review cycles run, max = configured maxIterations.
+- `1/3` = passed on first try (no issues found), max was 3
+- `2/3` = found issue → fix → passed on 2nd run, max was 3
+- `3/3 ESCALATED` = hit the limit, remaining issues handed to user
 
 ## Rules
 
@@ -195,18 +200,24 @@ All fixes applied. Ready to test.
 ```
 Codex Review Pipeline: PASS
 
-Correctness (1 iteration):
+Correctness (1/3 iterations):
 - Fix 1: null guard on updateRow — cell could be undefined after re-render
+  (passed on 2nd run after fix)
 
-Impact Analysis (1 iteration):
+Impact Analysis (1/3 iterations):
 - Checked 7 dependent files using TabulatorCellFormatter
 - lokal_penjualan/list_formatter_dibagikan.js — SAFE (uses updateRow, now guarded)
 - lokal_returan_customer/list_formatter_dibagikan.js — SAFE (same pattern)
 - 5 other formatters — SAFE (do not use updateRow)
+  (no breaking impact — passed on first check)
 
-Adversarial (2 iterations):
+Adversarial (2/3 iterations):
 - Fix 1: concurrent renderComplete fires could double-run fetch
 - Fix 2: empty result.data array — setDefaultValue called on stale $els
+  (passed on 3rd run after 2 fixes)
 
 All fixes applied. Ready to test.
 ```
+
+> `N/max`: N = how many review cycles actually ran, max = configured limit (`maxIterations`, default 3).
+> Use `-n 5` to allow more attempts, `-n 0` for unlimited.
