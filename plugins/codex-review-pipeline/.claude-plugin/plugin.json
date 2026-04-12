@@ -9,11 +9,13 @@
   "license": "MIT",
   "userConfig": {
     "maxIterations": {
+      "title": "Max Iterations",
       "type": "number",
       "default": 3,
       "description": "Max auto-fix iterations per review stage before escalating to user"
     },
     "failOnError": {
+      "title": "Fail On Error",
       "type": "boolean",
       "default": false,
       "description": "If true, abort pipeline on first stage that can't PASS within maxIterations instead of escalating"
