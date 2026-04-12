@@ -1,0 +1,22 @@
+{
+  "name": "codex-review-pipeline",
+  "owner": {
+    "name": "Yaotoshi",
+    "url": "https://github.com/onchainyaotoshi"
+  },
+  "metadata": {
+    "description": "2-stage code review pipeline: correctness + adversarial via Codex"
+  },
+  "plugins": [
+    {
+      "name": "codex-review-pipeline",
+      "description": "Automated 2-stage code review pipeline (correctness + adversarial) powered by Codex",
+      "version": "1.0.0",
+      "author": {
+        "name": "Yaotoshi",
+        "url": "https://github.com/onchainyaotoshi"
+      },
+      "source": "./plugins/codex-review-pipeline"
+    }
+  ]
+}

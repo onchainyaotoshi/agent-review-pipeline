@@ -1,0 +1,10 @@
+{
+  "name": "codex-review-pipeline",
+  "version": "1.0.0",
+  "description": "2-stage code review pipeline (correctness + adversarial) via Codex — auto-fix loop until PASS",
+  "author": {
+    "name": "Yaotoshi",
+    "url": "https://github.com/onchainyaotoshi"
+  },
+  "license": "MIT"
+}
