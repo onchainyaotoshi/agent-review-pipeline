@@ -32,12 +32,23 @@ Each stage auto-fixes issues and re-runs until PASS (max 3 iterations). If it ca
 
 ## Usage
 
+Review a pull request:
+```
+/codex-review-pipeline 42
+```
+
+Review current branch changes vs main:
+```
+/codex-review-pipeline
+```
+
+Review specific files:
 ```
 /codex-review-pipeline src/auth.js src/handlers/
 ```
 
 Or just ask Claude:
-> "Review these files before commit"
+> "Review PR 42" / "Check this before commit"
 
 The pipeline runs automatically — no manual trigger per stage.
 

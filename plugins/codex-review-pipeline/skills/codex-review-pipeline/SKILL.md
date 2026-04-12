@@ -1,7 +1,7 @@
 ---
 name: codex-review-pipeline
-description: 2-stage code review pipeline (correctness + adversarial) via Codex — run when user asks to review, check, or validate code before commit
-argument-hint: "[files or scope to review]"
+description: 2-stage code review pipeline (correctness + adversarial) via Codex — run when user asks to review a PR, check code, or validate before commit
+argument-hint: "[PR number | files or scope to review]"
 ---
 
 # Codex Review Pipeline
@@ -21,7 +21,7 @@ If the Codex plugin is not installed, inform the user and stop.
 
 ## When to Use
 
-- **Only when the user asks** — "review", "check this", "run the pipeline", "make sure this is correct"
+- **Only when the user asks** — "review PR 42", "review this", "check before commit", "run the pipeline"
 - Or when the user asks to commit — run before committing
 - **DO NOT** run automatically after every coding session — the user may want to test and approve first.
 
@@ -48,9 +48,22 @@ If the Codex plugin is not installed, inform the user and stop.
 
 ## How to Run
 
+### Input Resolution
+
+First, determine what to review based on the argument:
+
+| Argument | Action |
+|----------|--------|
+| PR number (e.g. `42`) | Run `gh pr diff <number>` to get changed files, then review those |
+| Branch name | Run `git diff main...<branch>` to get changed files |
+| File paths | Review those files directly |
+| No argument | Run `git diff --name-only main...HEAD` on the current branch |
+
+### Review via Codex
+
 Use the `codex:codex-rescue` subagent with a stage-appropriate prompt:
 
-### Step 1: Codex Review (Correctness)
+#### Step 1: Codex Review (Correctness)
 
 ```
 "Review [files]. Check for: logic errors, null derefs, missing functions,
@@ -58,7 +71,7 @@ column/data mismatches, type mismatches, missing error handling.
 Report PASS or list issues with file:line."
 ```
 
-### Step 2: Codex Adversarial (Break It)
+#### Step 2: Codex Adversarial (Break It)
 
 ```
 "ADVERSARIAL review [files]. Try to BREAK this code. Think like a hostile tester.
