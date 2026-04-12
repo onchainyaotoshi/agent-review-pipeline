@@ -1,7 +1,7 @@
 {
   "name": "codex-review-pipeline",
-  "version": "1.2.0",
-  "description": "2-stage code review pipeline (correctness + adversarial) via Codex — auto-fix loop until PASS",
+  "version": "1.3.0",
+  "description": "3-stage code review pipeline (correctness + impact analysis + adversarial) via Codex — auto-fix loop until PASS",
   "author": {
     "name": "Yaotoshi",
     "url": "https://github.com/onchainyaotoshi"
