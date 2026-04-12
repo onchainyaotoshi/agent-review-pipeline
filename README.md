@@ -65,7 +65,7 @@ Review a pull request:
 /codex-review-pipeline 42
 ```
 
-Review current branch changes vs main:
+Auto-detect (no argument) — if 1 PR open, use it; if 2+, ask which one:
 ```
 /codex-review-pipeline
 ```
@@ -73,6 +73,22 @@ Review current branch changes vs main:
 Review specific files:
 ```
 /codex-review-pipeline src/auth.js src/handlers/
+```
+
+### Flags
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--max-iterations N` | `-n N` | Max auto-fix iterations per stage (default: 3) |
+
+Yolo mode — unlimited iterations, run until PASS:
+```
+/codex-review-pipeline -n 0 42
+```
+
+Custom max iterations:
+```
+/codex-review-pipeline -n 5 42
 ```
 
 Or just ask Claude:
