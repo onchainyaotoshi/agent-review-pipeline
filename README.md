@@ -4,36 +4,46 @@ Automated 2-stage code review pipeline for [Claude Code](https://claude.ai/code)
 
 ## What It Does
 
-Runs a multi-stage quality gate on your code before shipping:
+Chains Codex's built-in review commands into a single pipeline with **automatic fix-and-retry**:
 
-1. **Correctness Review** — logic errors, null derefs, missing functions, type mismatches, missing error handling
-2. **Adversarial Review** — actively tries to *break* your code: edge cases, data loss, race conditions, validation bypass, overflow
-3. **Deliver** — summary of what was reviewed, how many iterations, and what was fixed
+1. **Correctness Review** (`/codex:review`) — logic errors, null derefs, missing functions, type mismatches
+2. **Adversarial Review** (`/codex:adversarial-review`) — actively tries to *break* your code: edge cases, data loss, race conditions, validation bypass
+3. **Deliver** — summary of what was reviewed, iteration counts, and all fixes applied
 
 Each stage auto-fixes issues and re-runs until PASS (max 3 iterations). If it can't fix everything, it escalates with a list of remaining issues.
 
 ```
-┌─────────────────┐
-│  1. CODEX REVIEW │ ← correctness: logic, null checks, missing functions
-│    (correctness) │
-└────────┬────────┘
-         │ issues? → fix → retry (max 3x)
+┌─────────────────────┐
+│ 1. /codex:review     │ ← correctness: logic, null checks, missing functions
+│    (auto-fix loop)   │
+└────────┬────────────┘
+         │ issues? → fix → re-run (max 3x)
          │ PASS ↓
-┌─────────────────┐
-│ 2. CODEX ADVERSARIAL │ ← break it: edge cases, data loss, race conditions
-│    (break it)        │
-└────────┬────────┘
-         │ issues? → fix → retry (max 3x)
+┌─────────────────────┐
+│ 2. /codex:adversarial-review │ ← break it: edge cases, data loss, race conditions
+│    (auto-fix loop)            │
+└────────┬─────────────────────┘
+         │ issues? → fix → re-run (max 3x)
          │ PASS ↓
-┌─────────────────┐
-│   3. DELIVER     │ ← summary with iteration counts and fixes applied
-└─────────────────┘
+┌─────────────────────┐
+│   3. DELIVER         │ ← summary with iteration counts and all fixes applied
+└─────────────────────┘
 ```
+
+## How It Differs from Running Codex Reviews Manually
+
+| Standalone Codex Review | This Pipeline |
+|--------------------------|---------------|
+| Run `/codex:review` or `/codex:adversarial-review` separately | Both chained automatically |
+| Stops after review — you fix manually | Auto-fixes and re-runs until PASS |
+| No PR integration | Accepts PR number, branch, or file paths |
+| Separate results per command | Combined summary at the end |
 
 ## Prerequisites
 
 - [Claude Code](https://claude.ai/code) CLI
-- [Codex plugin](https://github.com/openai/codex-plugin-cc) — install first:
+- [Codex CLI](https://github.com/openai/codex) installed and authenticated
+- [Codex plugin](https://github.com/openai/codex-plugin-cc) for Claude Code:
 
 ```
 /plugin marketplace add openai/codex-plugin-cc
@@ -75,7 +85,7 @@ The pipeline runs automatically — no manual trigger per stage.
 ```
 Codex Review Pipeline: PASS
 
-Review (2 iterations):
+Correctness (2 iterations):
 - Fix 1: null guard on update()
 - Fix 2: qty_kurang not included in submit filter
 
