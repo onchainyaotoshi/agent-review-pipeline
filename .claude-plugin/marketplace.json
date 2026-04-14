@@ -5,13 +5,13 @@
     "url": "https://github.com/onchainyaotoshi"
   },
   "metadata": {
-    "description": "Multi-engine 3-stage code review pipeline — auto-routes backend→Codex, frontend→Gemini, with auto-fix loop"
+    "description": "Multi-engine 5-stage autonomous review pipeline with Dual-Engine Consensus. Runs Codex + Gemini concurrently, dedups findings by confidence, auto-fixes until PASS, generates proving tests."
   },
   "plugins": [
     {
       "name": "agent-review-pipeline",
-      "description": "Multi-engine 3-stage code review pipeline (correctness + impact + adversarial). Auto-routes backend files to Codex, frontend to Gemini, mixed changes to both in parallel. Auto-fix loop until PASS.",
-      "version": "2.0.0",
+      "description": "5-stage autonomous review pipeline (correctness + impact + adversarial + test-gen + deliver) with Dual-Engine Consensus. Runs Codex and Gemini concurrently by default, boosts confidence on cross-engine agreement, drops findings below 0.60, auto-fixes inline until PASS.",
+      "version": "4.1.0",
       "author": {
         "name": "Yaotoshi",
         "url": "https://github.com/onchainyaotoshi"

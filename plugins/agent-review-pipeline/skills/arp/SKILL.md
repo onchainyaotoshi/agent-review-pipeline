@@ -1,7 +1,7 @@
 ---
 name: arp
-description: Multi-engine 5-stage autonomous review pipeline with Dual-Engine Consensus. Auto-routes backend→Codex, frontend→Gemini.
-argument-hint: "[-n N] [engine] [PR number | files]"
+description: Multi-engine 5-stage autonomous review pipeline. Default runs Codex + Gemini concurrently (Dual-Engine Consensus), dedups findings by confidence, auto-fixes inline, and generates proving tests.
+argument-hint: "[-n N] [codex|gemini|both] [PR number | files]"
 ---
 
 # Agent Review Pipeline (`/arp`)

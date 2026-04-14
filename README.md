@@ -26,8 +26,8 @@ Chains an intelligent, context-aware review process with **automatic fix-and-ret
 ## Installation
 
 ```
-/plugin marketplace add yaotoshi/agent-review-pipeline
-/plugin install agent-review-pipeline@yaotoshi
+/plugin marketplace add onchainyaotoshi/agent-review-pipeline
+/plugin install agent-review-pipeline@agent-review-pipeline
 /reload-plugins
 ```
 
