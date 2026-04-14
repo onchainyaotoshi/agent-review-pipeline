@@ -1,0 +1,36 @@
+{
+  "name": "agent-review-pipeline",
+  "version": "2.0.0",
+  "description": "Multi-engine 3-stage code review pipeline — auto-routes backend→Codex, frontend→Gemini, with auto-fix loop until PASS",
+  "author": {
+    "name": "Yaotoshi",
+    "url": "https://github.com/onchainyaotoshi"
+  },
+  "license": "MIT",
+  "userConfig": {
+    "maxIterations": {
+      "title": "Max Iterations",
+      "type": "number",
+      "default": 3,
+      "description": "Max auto-fix iterations per review stage before escalating to user (0 = unlimited)"
+    },
+    "failOnError": {
+      "title": "Fail On Error",
+      "type": "boolean",
+      "default": false,
+      "description": "If true, abort pipeline on first stage that can't PASS within maxIterations instead of escalating"
+    },
+    "defaultEngine": {
+      "title": "Default Engine",
+      "type": "string",
+      "default": "auto",
+      "description": "Engine selection when none specified on CLI. Values: auto (route by file domain), codex, gemini, both"
+    },
+    "geminiModel": {
+      "title": "Gemini Model",
+      "type": "string",
+      "default": "",
+      "description": "Optional -m <model> flag for gemini CLI (e.g. gemini-2.5-pro). Empty = CLI default."
+    }
+  }
+}
