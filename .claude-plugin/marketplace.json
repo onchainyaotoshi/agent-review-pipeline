@@ -1,22 +1,22 @@
 {
-  "name": "codex-review-pipeline",
+  "name": "agent-review-pipeline",
   "owner": {
     "name": "Yaotoshi",
     "url": "https://github.com/onchainyaotoshi"
   },
   "metadata": {
-    "description": "2-stage code review pipeline: correctness + adversarial via Codex"
+    "description": "Multi-engine 3-stage code review pipeline — auto-routes backend→Codex, frontend→Gemini, with auto-fix loop"
   },
   "plugins": [
     {
-      "name": "codex-review-pipeline",
-      "description": "Automated 2-stage code review pipeline (correctness + adversarial) powered by Codex",
-      "version": "1.1.0",
+      "name": "agent-review-pipeline",
+      "description": "Multi-engine 3-stage code review pipeline (correctness + impact + adversarial). Auto-routes backend files to Codex, frontend to Gemini, mixed changes to both in parallel. Auto-fix loop until PASS.",
+      "version": "2.0.0",
       "author": {
         "name": "Yaotoshi",
         "url": "https://github.com/onchainyaotoshi"
       },
-      "source": "./plugins/codex-review-pipeline"
+      "source": "./plugins/agent-review-pipeline"
     }
   ]
 }

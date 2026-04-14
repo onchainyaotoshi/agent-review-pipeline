@@ -38,8 +38,8 @@ Only install the engines you need. Install one and use `/arp codex` or `/arp gem
 ## Installation
 
 ```
-/plugin marketplace add onchainyaotoshi/codex-review-pipeline
-/plugin install agent-review-pipeline@codex-review-pipeline
+/plugin marketplace add onchainyaotoshi/agent-review-pipeline
+/plugin install agent-review-pipeline@agent-review-pipeline
 /reload-plugins
 ```
 

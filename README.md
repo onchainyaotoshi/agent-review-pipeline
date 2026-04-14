@@ -72,8 +72,8 @@ Install whichever engines you want. Only one installed? Use `/arp codex` or `/ar
 ## Installation
 
 ```
-/plugin marketplace add onchainyaotoshi/codex-review-pipeline
-/plugin install agent-review-pipeline@codex-review-pipeline
+/plugin marketplace add onchainyaotoshi/agent-review-pipeline
+/plugin install agent-review-pipeline@agent-review-pipeline
 /reload-plugins
 ```
 
