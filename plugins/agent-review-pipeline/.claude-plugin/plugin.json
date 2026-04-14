@@ -1,7 +1,7 @@
 {
   "name": "agent-review-pipeline",
-  "version": "2.0.0",
-  "description": "Multi-engine 3-stage code review pipeline — auto-routes backend→Codex, frontend→Gemini, with auto-fix loop until PASS",
+  "version": "4.1.0",
+  "description": "Multi-engine 5-stage autonomous review pipeline with Dual-Engine Consensus. Auto-routes backend→Codex, frontend→Gemini.",
   "author": {
     "name": "Yaotoshi",
     "url": "https://github.com/onchainyaotoshi"
@@ -12,7 +12,7 @@
       "title": "Max Iterations",
       "type": "number",
       "default": 3,
-      "description": "Max auto-fix iterations per review stage before escalating to user (0 = unlimited)"
+      "description": "Max auto-fix retry loops per stage before escalating (0 = unlimited)"
     },
     "failOnError": {
       "title": "Fail On Error",
@@ -23,14 +23,26 @@
     "defaultEngine": {
       "title": "Default Engine",
       "type": "string",
-      "default": "auto",
-      "description": "Engine selection when none specified on CLI. Values: auto (route by file domain), codex, gemini, both"
+      "default": "both",
+      "description": "Engine selection when none specified on CLI. Values: both, gemini, codex"
     },
     "geminiModel": {
       "title": "Gemini Model",
       "type": "string",
-      "default": "",
-      "description": "Optional -m <model> flag for gemini CLI (e.g. gemini-2.5-pro). Empty = CLI default."
+      "default": "gemini-3.1-pro-preview",
+      "description": "Model override for the Gemini subagent. Defaults to gemini-3.1-pro-preview."
+    },
+    "autoCommit": {
+      "title": "Auto Commit Fixes",
+      "type": "boolean",
+      "default": true,
+      "description": "If true, autonomously commit fixes at the end of the pipeline (Stage 5)."
+    },
+    "postPrComment": {
+      "title": "Post PR Comment",
+      "type": "boolean",
+      "default": true,
+      "description": "If true, automatically post the executive summary to the GitHub PR using 'gh pr comment'."
     }
   }
 }
