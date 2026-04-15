@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc8
+version: 5.0.0-rc9
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** Release candidate (rc8). rc2 addressed 3 security issues from PR #1's first e2e run; rc3-rc7 closed write-check refinement, parse-error diagnostics, integration-harness spec, PR-comment redaction, Codex enforced-read-only, and on-disk scrub; rc8 simplifies the argument surface — PR is now the sole review target, file-path mode dropped. See CHANGELOG.
+> **Status:** Release candidate (rc9). rc2 addressed 3 security issues from PR #1's first e2e run; rc3-rc8 closed write-check refinement, parse-error diagnostics, integration-harness spec, PR-comment redaction, Codex enforced-read-only, on-disk scrub, and argument simplification; rc9 adds a pre-flight working-tree freshness check that aborts when uncommitted changes from a prior run would cause the next run to review a stale PR-HEAD diff. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -124,9 +124,34 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
      - Verify `~/.gemini/commands/ce/review.toml` exists; error: *"Install ce:review extension for Gemini"*.
    - Always run `gh auth status` (PR is the sole review target); error: *"Run `gh auth login` — ARP needs authenticated `gh` to resolve the PR diff"*.
 4. **Concurrency guard:** acquire an advisory file lock via `exec 9>.arp.lock && flock -n 9` at pipeline start. If the lock cannot be acquired, abort with *"Another ARP run is in progress. Wait for it to finish or remove `.arp.lock` after confirming no other process."*. The lock is released automatically when the shell exits, or explicitly via `flock -u 9` at the end of Step 2. This is a real kernel-level lock — no TOCTOU window.
-5. Scan repo root for `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `CONTRIBUTING.md`. Inject contents into the `<repository_rules>` block of every engine prompt.
-6. Resolve PR diff via `gh pr diff <n>` (where `<n>` was passed or auto-detected in step 1).
-7. Initialize `.arp_session_log.json` with empty findings.
+5. **Working-tree freshness check** (rc9 — prevents stale-diff re-review and double-fix corruption). Skip when `dryRun: true` (peek mode is harmless even with dirty tree).
+
+   ```bash
+   if ! git diff --quiet HEAD || ! git diff --cached --quiet; then
+     cat <<'MSG'
+   ARP abort — working tree has uncommitted changes that are NOT in PR <n>'s diff.
+
+   `gh pr diff <n>` returns the GitHub-side PR HEAD, not your local working tree.
+   If a prior /arp run applied fixes you haven't pushed, this run will review
+   the same stale diff and either re-surface the same findings or fail
+   mid-loop with "old_string not found" because the fix is already in your
+   local file but not in the PR HEAD that the reviewers see.
+
+   Resolve via one of:
+     git status                              # see what is pending
+     git commit -am "..." && git push        # promote prior /arp fixes to the PR
+     git stash                               # set aside if not ARP-related
+     /arp --dry-run <n>                      # if you only want to peek
+
+   MSG
+     exit 1
+   fi
+   ```
+
+   This is a fail-closed pre-flight gate. The check covers both unstaged (`git diff --quiet HEAD`) and staged-but-not-committed (`git diff --cached --quiet`) changes. Untracked files are NOT a trigger — they're irrelevant to the diff dispatch.
+6. Scan repo root for `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `CONTRIBUTING.md`. Inject contents into the `<repository_rules>` block of every engine prompt.
+7. Resolve PR diff via `gh pr diff <n>` (where `<n>` was passed or auto-detected in step 1).
+8. Initialize `.arp_session_log.json` with empty findings.
 
 ### Step 1: Review (Asymmetric Dual-Engine)
 
@@ -270,6 +295,7 @@ GIT_AFTER=$(snapshot_git)
 - Model cascade fallback to `gemini-2.5-flash` requires explicit `ALLOW_FLASH_FALLBACK=1` env — prevents silent review-quality downgrade when pro-tier quota is exhausted (by attacker or ambient usage).
 - Per-model Gemini dispatch has a 10-minute `timeout 600` watchdog. On timeout, SIGTERM and move to next cascade step.
 - Concurrency guard uses real `flock -n` advisory lock on `.arp.lock`, not an mtime sniff — no TOCTOU window.
+- Pre-flight working-tree freshness check (Step 0.5) aborts when `git diff --quiet HEAD` or `git diff --cached --quiet` is non-clean. Prevents the "second /arp run reviews stale PR-HEAD diff while the local tree already has a previous run's fixes" failure mode — wasted dispatch quota plus mid-loop "old_string not found" Edit corruption. Skipped under `--dry-run` because peek mode applies no edits.
 
 ## Tuning Notes
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## 5.0.0-rc9 — 2026-04-15
+
+Closes a "second-run-on-stale-diff" foot-gun surfaced by user trace-through.
+
+### Background
+
+`gh pr diff <n>` returns the GitHub-side PR HEAD, not the local working tree. If a prior `/arp` run applied auto-fixes (Edit calls) but left them uncommitted (autoCommit=false default), a second run would:
+
+1. Fetch the same stale PR diff (because PR HEAD didn't change).
+2. Re-surface the same findings (loop-thrash kill switch doesn't help — `fingerprints_seen` is fresh per session and doesn't persist cross-run).
+3. Auto-fix loop tries to Edit the same `old_string` — which is already the *new* string in the local file — failing mid-loop with "old_string not found" and corrupting downstream iteration accounting.
+
+### Added
+
+- **Pre-flight working-tree freshness check** (Step 0.5). Runs `git diff --quiet HEAD` and `git diff --cached --quiet`; if either is non-clean, abort with a triage-friendly message listing the four resolution paths (`git status` / commit+push / `git stash` / `--dry-run`). Skipped under `--dry-run` because peek mode applies no edits, so dirty-tree second runs are harmless. Untracked files do NOT trigger the check (irrelevant to dispatch diff).
+
+### Result
+
+`/arp 1` after a previous-run-with-uncommitted-fixes now fails fast with explicit guidance instead of silently re-reviewing a stale diff and corrupting the auto-fix loop. Quota is preserved; user is told exactly which command to run next.
+
 ## 5.0.0-rc8 — 2026-04-15
 
 User-feedback simplification of the argument surface.
