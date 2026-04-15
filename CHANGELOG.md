@@ -1,5 +1,39 @@
 # Changelog
 
+## 5.0.0-rc2 — 2026-04-15
+
+Addresses the 7 findings from the first end-to-end validation run (PR #1), 3 of which were critical/high security issues introduced by rc1's Gemini dispatch hardening. Still rc — `/ce:review` under `-p` headless mode remains a known reliability risk (observed in the PR #1 run: the dispatch hung 41 min on `gemini-2.5-flash` and was SIGTERMed).
+
+### Security fixes
+
+- **Narrow `--include-directories`** from `~/.gemini` to `~/.gemini/commands/ce`. Prior scope granted Gemini read on `~/.gemini/settings.json` which can hold MCP env / headers (API keys). [P0 critical, conf 0.91 — Codex adversarial]
+- **Post-dispatch write check** — snapshot `git rev-parse HEAD && git status --porcelain` before and after each Gemini call; any delta aborts the pipeline. Catches writes that slip past `mode:report-only` when the model is prompt-injected or malfunctions. [P0 critical, conf 0.94 — Codex adversarial]
+- **`<ref>` validation** — reject branch/PR refs not matching `^[A-Za-z0-9/_.-]+$` before interpolating into the prompt. Blocks shell/prompt injection via attacker-controlled branch names. [P1 high, conf 0.83 — Codex adversarial]
+
+### Reliability / hardening
+
+- **`flock` concurrency guard** — replaced 10-min mtime sniff with real advisory lock (`exec 9>.arp.lock && flock -n 9`). No more TOCTOU window between two concurrent `/arp` runs.
+- **`ALLOW_FLASH_FALLBACK` gate** — cascade to `gemini-2.5-flash` now requires explicit opt-in env var. Pro-tier exhaustion no longer silently degrades review quality to flash.
+- **`timeout 600` per Gemini model attempt** — prevents 41-minute hangs like the one observed in PR #1 run. On timeout, subprocess is SIGTERMed and the cascade advances.
+- **Fingerprint formula tightened** — now includes `severity` and `sha1(fix_code[:200])` in the hash input. Two distinct bugs on the same line with similar issue text no longer collide and silently dedup.
+- **Spec drift fixed** — architecture table (line 30) and Safety Rails (line 197) now match the actual yolo-mode Gemini dispatch instead of the deprecated `--approval-mode plan` wording.
+- `.arp.lock` added to `.gitignore`.
+
+### Still known-open (see Production Blockers in rc1 entry)
+
+- Non-deterministic fingerprint across Claude sessions (LLM-dependent `normalize(issue)` text)
+- Parse-error diagnostics beyond silent skip
+- PR comment redaction for secrets/PII
+- Integration test harness
+- `/ce:review` `-p` headless reliability (hang observed on 2.5-flash in PR #1 run)
+- Enforced Codex read-only (prompt-level only; codex-rescue may still pass `--write`)
+
+### Validation
+
+- PR #1 comment: https://github.com/onchainyaotoshi/agent-review-pipeline/pull/1#issuecomment-4249096309
+- Dispatch health: Codex 2/2 OK, Gemini 0/1 (quota + flash hang)
+- Will re-run `/arp` on this branch after Gemini quota recovers to confirm the patches hold.
+
 ## 5.0.0-rc1 — 2026-04-15
 
 Release candidate for 5.0.0. Design and documentation complete; prompt-driven orchestration is **not** yet end-to-end tested against real Codex + Gemini dispatches. Treat behavior as contract, not guarantee.

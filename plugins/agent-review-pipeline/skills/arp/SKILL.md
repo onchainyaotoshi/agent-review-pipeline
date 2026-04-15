@@ -1,17 +1,15 @@
 ---
 name: arp
-version: 5.0.0-rc1
+version: 5.0.0-rc2
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number | files]"
 ---
 
-> **Status:** Release candidate. Design and documentation complete; prompt-driven orchestration has not been end-to-end tested against real Codex + Gemini dispatches. Treat behavior as contract, not guarantee. See CHANGELOG for the production-hardening backlog.
+> **Status:** Release candidate (rc2). First e2e validation (PR #1, 2026-04-15) surfaced 3 security issues in rc1's Gemini dispatch — all addressed in this version. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
 Autonomous code review pipeline with dual-engine consensus, asymmetric dispatch (Codex dual-framing + Gemini `/ce:review`), bounded auto-fix loop, and loop-thrash protection. Pure review — regression verification is the CI's job.
-
-<!-- test comment for ARP e2e validation -->
 
 ## Prerequisites
 
@@ -27,7 +25,7 @@ Prompts are written to a temporary file `.arp_stage_prompt.md` to bypass OS argu
 | Engine | Dispatch | Target / Command | Framing |
 |--------|----------|------------------|---------|
 | `codex` | `Agent` tool | `codex:codex-rescue` subagent | ARP-controlled: runs **twice** — once per framing (correctness + adversarial) |
-| `gemini` | `Bash` tool | `gemini -m "<geminiModel>" -p "/ce:review <args>\n\n<json output instruction>" --approval-mode plan -o text` | Delegated: `/ce:review` runs Gemini's compound-engineering multi-persona pipeline internally |
+| `gemini` | `Bash` tool | `timeout 600 gemini -m "<geminiModel>" --approval-mode yolo --include-directories ~/.gemini/commands/ce -p "$(cat .arp_stage_prompt.md)" -o text` — guarded by pre-dispatch `<ref>` validation + post-dispatch `git status` write-check | Delegated: `/ce:review` runs Gemini's compound-engineering multi-persona pipeline internally |
 
 **Why asymmetric:** Gemini already has `/ce:review`, a structured multi-persona review pipeline with P0-P3 severity tiering. Running ARP-side dual-framing on top would be redundant. Codex has no equivalent, so ARP provides the dual-framing discipline for Codex via two separate dispatches.
 
@@ -45,7 +43,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
   "iteration": 1,
   "findings": [
     {
-      "fingerprint": "<sha1(file+line+normalized_issue)>",
+      "fingerprint": "<sha1(file+line+severity+normalized_issue+sha1(fix_code[:200]))>",
       "file": "...",
       "line": 12,
       "issue": "...",
@@ -67,7 +65,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 }
 ```
 
-- `fingerprint` = `sha1(file + ":" + line + ":" + issue.toLowerCase().trim())`. Compute via `bash: printf '%s' "text" | sha1sum | cut -c1-40`.
+- `fingerprint` = `sha1(file + ":" + line + ":" + severity + ":" + normalize(issue) + ":" + sha1(fix_code[:200]))`. `normalize` = lowercase + collapse whitespace + strip non-alphanumeric punctuation + trim. Severity and fix_code-hash prevent same-line distinct-bug collisions. Compute via bash helper: `normalize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[[:space:]]\+/ /g; s/[^a-z0-9 ]//g' | sed 's/^ //; s/ $//'; }` then `printf '%s:%s:%s:%s:%s' "$file" "$line" "$severity" "$(normalize "$issue")" "$(printf '%.200s' "$fix_code" | sha1sum | cut -c1-40)" | sha1sum | cut -c1-40`.
 - `agreement.rate` = `both / (codex_only + gemini_only + both)`.
 - `source` lists exact dispatch origin (`codex:correctness`, `codex:adversarial`, `gemini:ce-review`) for debugging.
 
@@ -111,7 +109,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
      - Run `gemini models list` and confirm `<geminiModel>` is listed; error: *"Model `<geminiModel>` not available. Run `gemini models list`."*.
      - Verify `~/.gemini/commands/ce/review.toml` exists; error: *"Install ce:review extension for Gemini"*.
    - If a PR number was passed: run `gh auth status`; error: *"Run `gh auth login` before reviewing PRs by number"*.
-4. **Concurrency guard:** if `.arp_session_log.json` or `.arp_stage_prompt.md` exists and was modified within the last 10 minutes, abort with *"Another ARP run appears to be in progress. Delete `.arp_*` files to force a new run."*.
+4. **Concurrency guard:** acquire an advisory file lock via `exec 9>.arp.lock && flock -n 9` at pipeline start. If the lock cannot be acquired, abort with *"Another ARP run is in progress. Wait for it to finish or remove `.arp.lock` after confirming no other process."*. The lock is released automatically when the shell exits, or explicitly via `flock -u 9` at the end of Step 2. This is a real kernel-level lock — no TOCTOU window.
 5. Scan repo root for `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `CONTRIBUTING.md`. Inject contents into the `<repository_rules>` block of every engine prompt.
 6. Resolve PR targets via `gh pr diff <n>` (or use provided file paths).
 7. Initialize `.arp_session_log.json` with empty findings.
@@ -133,19 +131,43 @@ Prompt includes: "READ-ONLY review. Do not edit any file — output findings onl
 
 **Dispatch 3 — Gemini × /ce:review** (Bash tool):
 
-Model cascade: try `<geminiModel>` (default `gemini-3.1-pro-preview`), on quota error fall back to `gemini-2.5-pro`, then `gemini-2.5-flash`. Use the first model that responds without a 429/quota error.
+**Model cascade** — try `<geminiModel>` (default `gemini-3.1-pro-preview`), on `429`/quota error fall back to `gemini-2.5-pro`. **Fallback to `gemini-2.5-flash` is gated**: only allowed when env `ALLOW_FLASH_FALLBACK=1` is set, otherwise abort dispatch with *"Gemini pro-tier exhausted (3.1-pro-preview + 2.5-pro); set ALLOW_FLASH_FALLBACK=1 to accept flash (materially weaker review) or retry later"*. This prevents silent quality downgrade when an attacker or ambient usage exhausts pro quota. Per-model dispatch uses `timeout 600` (10 min) — on timeout SIGTERM the subprocess and move to the next cascade step.
 
-```bash
-gemini -m "<geminiModel>" --approval-mode yolo --include-directories ~/.gemini -p "/ce:review mode:report-only base:<ref>
+**`<ref>` validation** — before interpolation, validate against `^[A-Za-z0-9/_.-]+$`. Reject with *"Invalid ref: <ref>"* if it contains quotes, newlines, or shell metacharacters. Prevents shell injection through attacker-controlled branch/PR refs.
+
+**Prompt body** — written to `.arp_stage_prompt.md` first (so the shell never sees the prompt as an argv), then read via `$(cat .arp_stage_prompt.md)`:
+
+```
+/ce:review mode:report-only base:<ref>
 
 After the compound-engineering review, output ONLY a JSON array summarizing all findings. No markdown fences, no prose.
 Map severity: P0→critical, P1→high, P2→medium, P3→low.
-Schema: [{\"file\":\"...\",\"line\":12,\"severity\":\"...\",\"confidence\":0.85,\"issue\":\"...\",\"fix_code\":\"...\"}]" -o text
+Schema: [{"file":"...","line":12,"severity":"...","confidence":0.85,"issue":"...","fix_code":"..."}]
 ```
 
-> `--approval-mode yolo` is required — `plan` mode blocks shell access and prevents ce:review from running git/grep. Report-only mode (`mode:report-only`) ensures Gemini never edits files even with yolo approval. `--include-directories ~/.gemini` allows Gemini to read skill files outside the project workspace.
+**Dispatch wrapper** (pre- and post-checks enforce read-only):
 
-`<pr-or-diff-ref>` is the PR number or branch/ref passed to `/arp`. If reviewing local file paths, pass `HEAD` and include the list of paths in the prompt body.
+```bash
+# 1. Validate <ref> to block shell/prompt injection
+REF="<ref>"
+[[ "$REF" =~ ^[A-Za-z0-9/_.-]+$ ]] || { echo "Invalid ref: $REF"; exit 1; }
+
+# 2. Snapshot git state for post-dispatch write detection
+GIT_BEFORE=$(git rev-parse HEAD 2>/dev/null; git status --porcelain 2>/dev/null)
+
+# 3. Dispatch — yolo approval + narrowed include-dir + hard timeout
+timeout 600 gemini -m "<geminiModel>" --approval-mode yolo \
+  --include-directories "$HOME/.gemini/commands/ce" \
+  -p "$(cat .arp_stage_prompt.md)" -o text
+
+# 4. Post-dispatch write check — aborts pipeline if Gemini modified anything
+GIT_AFTER=$(git rev-parse HEAD 2>/dev/null; git status --porcelain 2>/dev/null)
+[[ "$GIT_BEFORE" == "$GIT_AFTER" ]] || { echo "Gemini write detected despite mode:report-only — aborting"; exit 2; }
+```
+
+> Read-only enforced through **three layers**: (1) `mode:report-only` prompt flag, (2) `--include-directories` scoped to `~/.gemini/commands/ce` (not the whole `~/.gemini` tree — prevents credential exposure via `settings.json` MCP env/headers), (3) post-dispatch `git status --porcelain` diff check that aborts on any modification. `--approval-mode yolo` is necessary because `plan` blocks shell access which `/ce:review` needs for git/grep.
+
+`<ref>` is the PR number or branch/ref passed to `/arp`. If reviewing local file paths, pass `HEAD` and include the list of paths in the prompt body.
 
 **Parallel execution:** dispatch all active subagents concurrently. Collect outputs.
 
@@ -185,7 +207,7 @@ Schema: [{\"file\":\"...\",\"line\":12,\"severity\":\"...\",\"confidence\":0.85,
 3. If `dryRun: true`: stop — do not commit, do not post.
 4. If `autoCommit: true`: execute `git add .` and `git commit -m "chore(arp): autonomous review fixes"`. Off by default.
 5. If `postPrComment: true`: post executive summary to GitHub PR via `gh pr comment`. Off by default.
-6. Clean up `.arp_stage_prompt.md`. Rename `.arp_session_log.json` to `.arp_session_log.<timestamp>.json` and prune logs older than 7 days from the repo root to prevent unbounded growth.
+6. Clean up `.arp_stage_prompt.md` and release the lock via `flock -u 9` (then `rm -f .arp.lock`). Rename `.arp_session_log.json` to `.arp_session_log.<timestamp>.json` and prune logs older than 7 days from the repo root to prevent unbounded growth.
 
 ## Safety Rails
 
@@ -194,7 +216,12 @@ Schema: [{\"file\":\"...\",\"line\":12,\"severity\":\"...\",\"confidence\":0.85,
 - `--dry-run` disables all state-changing actions (Edit, commit, PR comment).
 - Dependency precheck fails fast before any engine is dispatched.
 - Parse errors logged and skipped, not fatal.
-- Codex dispatches prefix prompt with **"READ-ONLY review. Do not edit any file"** to prevent Codex from auto-editing in parallel with ARP orchestrator. (Gemini is hard-locked read-only via `--approval-mode plan`.)
+- Codex dispatches prefix prompt with **"READ-ONLY review. Do not edit any file"** to prevent Codex from auto-editing in parallel with ARP orchestrator.
+- Gemini read-only enforced via **three-layer defence**: `mode:report-only` prompt flag, `--include-directories` scoped to `~/.gemini/commands/ce` only (not `~/.gemini`), and post-dispatch `git status --porcelain` write-check that aborts on any modification. `--approval-mode yolo` is needed because `plan` blocks the shell access `/ce:review` requires.
+- `<ref>` validated against `^[A-Za-z0-9/_.-]+$` before interpolation — blocks shell/prompt injection through attacker-controlled branch or PR refs.
+- Model cascade fallback to `gemini-2.5-flash` requires explicit `ALLOW_FLASH_FALLBACK=1` env — prevents silent review-quality downgrade when pro-tier quota is exhausted (by attacker or ambient usage).
+- Per-model Gemini dispatch has a 10-minute `timeout 600` watchdog. On timeout, SIGTERM and move to next cascade step.
+- Concurrency guard uses real `flock -n` advisory lock on `.arp.lock`, not an mtime sniff — no TOCTOU window.
 
 ## Tuning Notes
 
