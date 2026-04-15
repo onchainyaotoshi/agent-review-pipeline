@@ -1,5 +1,29 @@
 # Changelog
 
+## 5.2.0-rc1 — 2026-04-15
+
+Adds PR conversation context fetching. Each `/arp` run now reads existing PR comments, reviews, and unresolved review threads before dispatching engines, and instructs them to suppress findings the maintainer has already discussed. Closes the cross-iteration continuity gap surfaced by user trace-through during the v5.1.0 dogfood: previously a second `/arp` on a long-lived PR re-surfaced findings that maintainers had already dismissed in earlier rounds, because ARP only fetched the diff and had zero context about prior conversation.
+
+### Added
+
+- **Step 0.8 — Fetch PR conversation context.** New pre-dispatch step calls `gh pr view <n> --json title,body,author,comments,reviews,reviewThreads > .arp_pr_context.json`. Process before injection:
+  - Always include title, body, author.
+  - Top-level comments truncated to 800 chars each.
+  - Reviews (APPROVED / CHANGES_REQUESTED / COMMENTED) with state, author, body (800 chars).
+  - Review threads — **only unresolved** (`isResolved == false`). Resolved = noise. Each thread's file path, line, and comments truncated to 400 chars.
+  - **Filter ARP's own posted comments** (signature `🤖 Posted by ARP` or `## ARP Run —` prefix) so prior auto-posts don't recursively pollute new runs.
+- **`<pr_context>` block injected into engine prompts.** Separate from `<diff>` so engines can weight differently. Includes title / body / comments / reviews / unresolved_threads sub-elements.
+- **Engine instructions for the new context block:** Treat `<pr_context>` as authoritative maintainer signal. If a finding was already raised and explicitly dismissed → suppress. If raised and still unresolved → lower confidence by 0.10 and tag issue text with `(also raised: <author>)`.
+- **`.gitignore`** updated for `.arp_pr_context.json` and `.arp_repository_rules.md` (the latter was already present in working tree but missed in earlier `.gitignore` add).
+
+### Why minor bump (5.1.0 → 5.2.0)
+
+Backward-compatible feature addition: existing `/arp` invocations continue to work, just now with extra context that may shift findings (some suppressed, some confidence-adjusted). Not breaking — operators relying on prior behavior will see strictly equal-or-fewer findings, never more spurious ones.
+
+### `-rc1` suffix
+
+Behavior unverified end-to-end. Need a real e2e dispatch against a PR with comments to confirm the engines actually act on `<pr_context>` and don't ignore it. The natural test is opening this PR (PR #3) and reviewing it once it has at least one human comment.
+
 ## 5.1.0 — 2026-04-15
 
 First GA after 15 same-day release candidates. Pipeline is provably end-to-end reliable on both Codex and Gemini engines with the fork-side sequential persona spawn (`onchainyaotoshi/compound-engineering-plugin@917a6f2` on `fix/gemini-ce-review-dispatch`) installed.

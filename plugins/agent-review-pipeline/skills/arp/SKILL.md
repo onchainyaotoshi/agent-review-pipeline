@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.1.0
+version: 5.2.0-rc1
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** v5.1.0 — first GA after 15 rc cycles in one day (2026-04-15). E2E gate passed on rc13 with first successful Gemini findings JSON delivery; rc14-rc15 dogfood loop applied 7 of 18 self-surfaced findings. Pipeline is now provably end-to-end on both engines with fork-side sequential persona spawn (`compound-engineering-plugin@917a6f2`) + ARP-side `gemini-3-flash-preview` default + 30-minute timeout. Codex 2/2 + Gemini 1/1 dispatch reliability validated. See CHANGELOG.
+> **Status:** v5.2.0-rc1 — adds PR conversation context fetching (Step 0.8). A second `/arp` run on a long-lived PR now reads existing maintainer comments + unresolved review threads + prior reviews and instructs engines to suppress already-dismissed findings + lower-confidence already-raised-but-unresolved findings. Closes the cross-iteration continuity gap identified during the v5.1.0 dogfood. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -161,7 +161,48 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 
    Inject `.arp_repository_rules.md` contents into the `<repository_rules>` block of every engine prompt. If a rules file doesn't exist on the base ref, omit it silently. Never inject the working-tree copy.
 7. Resolve PR diff via `gh pr diff <n>` (where `<n>` was passed or auto-detected in step 1).
-8. Initialize `.arp_session_log.json` with empty findings.
+8. **Fetch PR conversation context (rc16 — `5.2.0-rc1`)** so the engines have continuity across iterations of a long-lived PR. A second `/arp` run on a PR that already has comments should not re-surface findings the maintainer has already discussed and dismissed.
+
+   ```bash
+   gh pr view "$PR_NUMBER" -R "$REPO" --json title,body,author,comments,reviews,reviewThreads \
+     > .arp_pr_context.json
+   ```
+
+   Process the JSON before injecting:
+   - **Always include:** title, body (PR description), author login.
+   - **Comments:** include all top-level issue comments (the PR conversation tab). Truncate each `body` to 800 chars with a `…[truncated]` marker.
+   - **Reviews:** include each review's `state` (APPROVED / CHANGES_REQUESTED / COMMENTED), author, and body. Truncate body to 800 chars.
+   - **Review threads:** include only **unresolved** threads (`isResolved == false`). Resolved threads are noise — they were addressed. For each unresolved thread, include the thread's file path, line, and comments (each truncated to 400 chars).
+   - **Filter ARP's own posted comments:** any comment whose body contains `🤖 Posted by ARP` or starts with `## ARP Run —` is a prior auto-post. Skip them — they're our own output, not maintainer signal.
+
+   Inject into the prompt body as a `<pr_context>` block (separate from the diff so engines can weight it differently):
+
+   ```
+   <pr_context>
+     <title>...</title>
+     <body>...</body>
+     <comments>
+       <comment author="..." created="...">...</comment>
+       ...
+     </comments>
+     <reviews>
+       <review state="..." author="...">...</review>
+       ...
+     </reviews>
+     <unresolved_threads>
+       <thread file="..." line="...">
+         <comment author="...">...</comment>
+       </thread>
+       ...
+     </unresolved_threads>
+   </pr_context>
+   ```
+
+   Engines are instructed in the prompt: *"Treat `<pr_context>` as authoritative maintainer signal. If a finding you would emit was already raised in a comment/review and either explicitly dismissed (e.g., maintainer replied "won't fix" / "out of scope") or marked resolved, suppress it. If a finding you would emit was already raised and is still unresolved, lower its confidence by 0.10 and tag the issue text with `(also raised: <author>)`."*
+
+   If `gh pr view` fails or returns empty (new PR with zero comments), proceed with an empty `<pr_context/>` element. Do not abort — empty context is the normal case for a fresh PR.
+
+9. Initialize `.arp_session_log.json` with empty findings.
 
 ### Step 1: Review (Asymmetric Dual-Engine)
 
