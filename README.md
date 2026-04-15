@@ -5,7 +5,7 @@ Autonomous dual-engine code review pipeline for [Claude Code](https://claude.ai/
 ## What It Does
 
 1. **Asymmetric Dual-Engine Review** — 3 parallel dispatches per iteration: Codex × correctness, Codex × adversarial, Gemini × `/ce:review`. Codex gets ARP's framing discipline; Gemini uses its own multi-persona compound-engineering pipeline (P0-P3 tiering) because it already has one. No redundancy.
-2. **Confidence-Weighted Consensus** — Findings fingerprinted as `sha1(file:line:issue)`. Multi-source agreement boosts confidence by `+0.15` per extra source. Findings below `0.60` confidence are dropped.
+2. **Confidence-Weighted Consensus** — Findings fingerprinted by `file:line:severity:normalize(issue):sha1(fix_code[:200])`. Multi-source agreement boosts confidence by `+0.15` per extra source. Findings below `0.60` confidence are dropped.
 3. **Bounded Auto-Fix Loop** — Applies `fix_code` inline, re-runs until PASS or `maxIterations` (1-10, default 3). Unlimited loops are intentionally not supported.
 4. **Loop-Thrash Kill Switch** — If a fingerprint reappears after its fix was applied, the fix didn't work. The finding is escalated to human review instead of looping forever.
 5. **Safe Defaults** — `autoCommit` and `postPrComment` default to `false`. `--dry-run` previews findings without editing. Dependency precheck fails fast if Codex / Gemini CLI missing.
