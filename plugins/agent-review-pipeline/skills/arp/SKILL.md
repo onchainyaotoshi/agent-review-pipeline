@@ -5,7 +5,7 @@ description: Autonomous dual-engine code review pipeline. Asymmetric dispatch �
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [benchmark] [PR number]"
 ---
 
-> **Status:** v5.3.2 — patch release from the first v5.3.x real-consumer dispatch (camis_api_native PR #251, 15-file frontend race-condition fix). Two UX/quality improvements surfaced: (B) `snapshot_git` post-filter for `.arp_*` and `.context/compound-engineering/` paths so the Gemini write-check doesn't false-positive on fresh downstream repos whose `.gitignore` hasn't listed those runtime directories yet; (C) Gemini `/ce:review` prompt now includes an explicit "find what's STILL BROKEN, not what the PR already fixes" directive because the camis dispatch skewed Gemini toward `[... fixed in PR]` acknowledgments instead of residual-risk findings — Codex adversarial carried the real-bug load unassisted. A separate fork-side fix (compound-engineering-plugin) addresses ce-review's mode:report-only artifact-write contract violation. v5.3.0 pins (Flash-only, API key auth type, parallel spawn) retained unchanged. See CHANGELOG.
+> **Status:** v5.4.0 — adds `/arp benchmark <PR>` subcommand to compare Gemini Flash (`gemini-3-flash-preview`) vs Pro (`gemini-3.1-pro-preview`) findings quality on a specific PR. Scores findings by precision (confidence ≥ 0.80), depth (body + file:line + fix_code composite), and FP rate (confidence < 0.70). Prints side-by-side ASCII table with verdict. Writes `.arp_benchmark_<epoch>.json` artifact (gitignored, fail-closed secret redaction). Read-only — no auto-fix, no commit, no PR comment. Motivation: empirically compare Flash vs Pro before deciding whether to re-enable Pro in camis_api_native. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
