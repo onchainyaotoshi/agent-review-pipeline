@@ -1,5 +1,31 @@
 # Changelog
 
+## 5.0.0-rc4 — 2026-04-15
+
+Quota-wait productivity pass — tackles two named production blockers without burning dispatch quota.
+
+### Changed
+
+- **Parse-error diagnostics upgraded from silent-skip to explicit per-source artifacts.** On second JSON parse failure, the raw dispatch output is now persisted to `.arp_parse_error_<source>_iter<N>_<epoch>.txt` and the session log records a diagnostics object (`source`, `iteration`, `artifact`, `raw_bytes`, `raw_sha1`, `first_200_chars`). The Deliver summary MUST surface per-source parse-error counts with the artifact path — reviewers can now distinguish a zero-finding run from a silent-skip run. Artifacts are gitignored and pruned alongside session logs after 7 days.
+- **Session log schema extended** with a `parse_errors` array (see SKILL.md schema block).
+
+### Added
+
+- `docs/specs/integration-test-harness.md` — draft spec for deterministic fixture-replay harness (named production blocker). Captures interception-point options, fixture layout, coverage matrix, CI plan, and open questions. Not implemented yet; unblocks the follow-up PR.
+
+### Docs
+
+- `CONTRIBUTING.md` fingerprint formula synced to rc2+ (`sha1(file:line:severity:normalize(issue):sha1(fix_code[:200]))`) — the "Design Principles" bullet was still citing the rc1 formula.
+- `.arp_parse_error_*.txt` added to `.gitignore`.
+
+### Still known-open
+
+- Deterministic fingerprint across Claude sessions (LLM-dependent `normalize(issue)` text)
+- PR comment redaction for secrets/PII
+- Integration test harness (**spec landed, implementation deferred**)
+- `/ce:review` `-p` headless reliability (hang observed on 2.5-flash in PR #1 run)
+- Enforced Codex read-only (prompt-level only; codex-rescue may still pass `--write`)
+
 ## 5.0.0-rc3 — 2026-04-15
 
 Two refinements surfaced by a same-day validation-probe pass against the Gemini fork:

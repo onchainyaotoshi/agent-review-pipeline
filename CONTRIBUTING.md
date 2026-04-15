@@ -32,18 +32,17 @@ The **canonical source of truth** for pipeline behavior is `plugins/agent-review
 - **Prompt-driven, not runtime-driven.** The plugin is currently a Claude skill that describes behavior in natural language. Claude invoking the skill executes the steps. Avoid adding runtime dependencies (Node scripts, etc.) until a dedicated runtime-rewrite branch lands.
 - **Asymmetric dispatch.** Codex gets ARP-authored prompts; Gemini gets its own `/ce:review` pipeline. Don't duplicate framing work.
 - **Safe defaults.** `autoCommit` and `postPrComment` are `false` by default. `maxIterations` is capped at 10. These exist because LLM agents can silently spend money and push changes.
-- **Fingerprint-based idempotency.** Findings are identified by `sha1(file:line:issue)`. Never rely on LLM-generated IDs.
+- **Fingerprint-based idempotency.** Findings are identified by `sha1(file:line:severity:normalize(issue):sha1(fix_code[:200]))`. Never rely on LLM-generated IDs.
 
 ## Known Production Blockers (see CHANGELOG)
 
 The following need a runtime orchestrator (not prompt-driven) before this plugin is truly production-grade:
 
 - Deterministic fingerprint computation
-- Session log concurrency safety (file locks)
-- Parse-error diagnostics beyond silent skip
+- Session log concurrency safety (file locks — partially addressed in rc2 via flock)
 - LLM-side cost pre-estimate
 - Redaction pass for PR comment
-- Integration test harness
+- Integration test harness (draft spec at `docs/specs/integration-test-harness.md`; implementation deferred)
 
 Contributions toward these are welcome. Open an issue first to align on approach.
 

@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc3
+version: 5.0.0-rc4
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number | files]"
 ---
 
-> **Status:** Release candidate (rc3). rc2 addressed 3 security issues from PR #1's first e2e run; rc3 refines the post-dispatch write-check (no more false positives on gitignored runtime artifacts) and documents the empirically-dead flash fallback path. See CHANGELOG.
+> **Status:** Release candidate (rc4). rc2 addressed 3 security issues from PR #1's first e2e run; rc3 refined the post-dispatch write-check and documented the empirically-dead flash fallback path; rc4 upgrades parse-error handling from silent-skip to explicit per-source diagnostics with raw-output artifacts, and ships a draft integration-test-harness spec. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -61,7 +61,17 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
     "both": 5,
     "rate": 0.625
   },
-  "fingerprints_seen": ["<sha1>", "..."]
+  "fingerprints_seen": ["<sha1>", "..."],
+  "parse_errors": [
+    {
+      "source": "gemini:ce-review",
+      "iteration": 2,
+      "artifact": ".arp_parse_error_gemini-ce-review_iter2_1713195845.txt",
+      "raw_bytes": 4823,
+      "raw_sha1": "<sha1>",
+      "first_200_chars": "..."
+    }
+  ]
 }
 ```
 
@@ -181,7 +191,13 @@ GIT_AFTER=$(snapshot_git)
 
 **JSON Robustness:**
 1. On parse failure per dispatch, strip outer markdown fence (``` / ```json) if present and re-parse.
-2. On second failure, log the raw output under `parse_errors` in the session log and skip that dispatch's findings. Do not abort pipeline.
+2. On second failure, persist the raw output to `.arp_parse_error_<source>_iter<N>_<epoch>.txt` (e.g. `.arp_parse_error_gemini-ce-review_iter2_1713195845.txt`) and record a diagnostics object in the session log's `parse_errors` array:
+   ```json
+   { "source": "gemini:ce-review", "iteration": 2, "artifact": ".arp_parse_error_gemini-ce-review_iter2_1713195845.txt", "raw_bytes": 4823, "raw_sha1": "<sha1>", "first_200_chars": "..." }
+   ```
+   Do not embed the full raw output in the session log (keeps the log lean and redactable). Skip that dispatch's findings for this iteration. Do not abort pipeline.
+3. The Step 2 Deliver summary MUST surface parse-error counts per source (e.g. *"Dispatch health: Codex 2/2 OK, Gemini 0/1 (parse error — see `.arp_parse_error_gemini-ce-review_iter1_*.txt`)"*), so reviewers can tell a zero-finding run apart from a silent-skip run.
+4. Parse-error artifacts are gitignored (`.arp_parse_error_*` glob added to `.gitignore`) and pruned alongside session logs after 7 days in Step 2 cleanup.
 
 **Merge + Fingerprint:**
 3. For each finding, compute `fingerprint`. Tag with `source` (e.g. `codex:correctness`) and infer `produced_by` from source prefix.
@@ -210,12 +226,12 @@ GIT_AFTER=$(snapshot_git)
    - **Agreement rate** (aggregate `agreement.rate`)
    - Escalated findings (kill switch triggered)
    - Per-engine attribution (`codex_only`, `gemini_only`, `both`)
-   - Parse error count
+   - Per-source parse-error count with artifact path (e.g. *"gemini:ce-review — 1 parse error, raw at `.arp_parse_error_gemini-ce-review_iter1_*.txt`"*). Do not silent-skip.
 2. Print summary to stdout always.
 3. If `dryRun: true`: stop — do not commit, do not post.
 4. If `autoCommit: true`: execute `git add .` and `git commit -m "chore(arp): autonomous review fixes"`. Off by default.
 5. If `postPrComment: true`: post executive summary to GitHub PR via `gh pr comment`. Off by default.
-6. Clean up `.arp_stage_prompt.md` and release the lock via `flock -u 9` (then `rm -f .arp.lock`). Rename `.arp_session_log.json` to `.arp_session_log.<timestamp>.json` and prune logs older than 7 days from the repo root to prevent unbounded growth.
+6. Clean up `.arp_stage_prompt.md` and release the lock via `flock -u 9` (then `rm -f .arp.lock`). Rename `.arp_session_log.json` to `.arp_session_log.<timestamp>.json`. Prune `.arp_session_log.*.json` and `.arp_parse_error_*.txt` older than 7 days from the repo root to prevent unbounded growth.
 
 ## Safety Rails
 
@@ -223,7 +239,7 @@ GIT_AFTER=$(snapshot_git)
 - `autoCommit` and `postPrComment` default to `false`. User opts in.
 - `--dry-run` disables all state-changing actions (Edit, commit, PR comment).
 - Dependency precheck fails fast before any engine is dispatched.
-- Parse errors logged and skipped, not fatal.
+- Parse errors persisted to `.arp_parse_error_<source>_iter<N>_<epoch>.txt` and surfaced per-source in the Deliver summary. Not fatal, but no longer silent-skipped.
 - Codex dispatches prefix prompt with **"READ-ONLY review. Do not edit any file"** to prevent Codex from auto-editing in parallel with ARP orchestrator.
 - Gemini read-only enforced via **three-layer defence**: `mode:report-only` prompt flag, `--include-directories` scoped to `~/.gemini/commands/ce` only (not `~/.gemini`), and post-dispatch `git status --porcelain` write-check that aborts on any modification. `--approval-mode yolo` is needed because `plan` blocks the shell access `/ce:review` requires.
 - `<ref>` validated against `^[A-Za-z0-9/_.-]+$` before interpolation — blocks shell/prompt injection through attacker-controlled branch or PR refs.
