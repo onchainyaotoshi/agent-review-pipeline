@@ -1,5 +1,37 @@
 # Changelog
 
+## 5.2.0 — 2026-04-15 (GA)
+
+Six-rc cycle on the same day as v5.1.0 GA. Shipped after Codex dual-framing produced a findings JSON on rc6 dispatch; Gemini /ce:review validation of the fork-side skill-name allowlist is deferred to the next day because the Google daily quota bucket exhausted across both Flash and Pro mid-release.
+
+### Shipped
+
+- **PR conversation context fetching (rc1).** Single GraphQL fetch of title/body/author/comments/reviews/reviewThreads, injected into engine prompts so multi-iteration PRs don't re-surface findings a maintainer already dismissed.
+- **Expanded rules glob (rc1).** Reads `.claude/rules/*.md`, `.claude/CLAUDE.md`, `docs/CONVENTIONS*.md` in addition to top-level `AGENTS.md` / `CLAUDE.md` / `.cursorrules` / `CONTRIBUTING.md`. Same trusted-base-ref discipline via `git show origin/<base>:`.
+- **Worktree-awareness note (rc1).** Documented per-worktree cwd lock semantics for `autoCommit=true` operators.
+- **is_arp_post jq parenthesization (rc3).** rc2 silently emptied the entire PR-context feature to `{}` due to a pipe-binding bug.
+- **Bot-author regex anchored at both ends per alternative (rc3).** rc2's pattern allowed `github-actions-evil` bypass.
+- **Sentinel-marker injection instead of XML tags (rc3).** Prevents `</pr_context>` tag-break in JSON-encoded comment bodies.
+- **Single GraphQL fetch, mv-failure chained, truncation marker correct, cross-worktree PR-scoped lock (rc3).** Multiple rc2 findings folded in.
+- **GraphQL pagination awareness (rc4).** `pageInfo { hasNextPage }` on all four paged connections + `truncation_warning` boolean; prevents comment-flood attacks from silently truncating maintainer signal.
+- **Sentinel ID fail-closed (rc4).** `$(set -o pipefail; head -c 8 /dev/urandom | xxd -p)` with regex validation `^[0-9a-f]{16}$`; prevents predictable sentinel collapse in containers without /dev/urandom.
+- **Cleanup glob `.arp_*.tmp` (rc4).** Matches the `.arp_pr_context.json.tmp` sidecar rc2 claimed to fix but didn't.
+- **Orchestrator domain hint (rc5, fixed in rc6).** Pre-computed file-extension summary injected into the Gemini prompt reduces reviewer-selection cognitive load. rc5 shipped broken (`$0`/`$1`/`$2` substituted by skill loader); rc6 rewrites in pure bash parameter expansion.
+- **Fork skill-name allowlist guard (rc5).** `compound-engineering-plugin` @ `d92a93e` on `fix/gemini-ce-review-dispatch`. Flat table of 21 valid names with hard-stop framing in Stage 4 of ce-review SKILL.md. Installed at `~/.gemini/skills/ce-review/SKILL.md`. Not validated live because Gemini never completed a dispatch on release day.
+- **Mermaid subgraph clarity.** Stage 0 / Stage 1 / Stage 2 explicit subgraphs so auto-fix is visually inside the Review loop, not mid-stage.
+
+### Known-open — deferred to v5.2.1
+
+All three surfaced by Codex dual-framing on the rc6 dispatch. Scope is local-only source divergence and lock-file hygiene — the pipeline correctness invariants (read-only enforcement, kill switch, safe defaults) are unaffected. Shipping GA with these open is a calculated call: they don't introduce new attack surface, and deferring avoids another same-day rc spin with no Gemini side to validate against.
+
+- **HIGH — EXT_SUMMARY source divergence (SKILL.md:352).** The domain hint derives from `git diff --name-only "origin/$PR_BASE...HEAD"` but the actual review target in Step 0.7 is `gh pr diff <n>`. Local branch drift from the GitHub PR head can make the summary describe the wrong file set, so Gemini's orchestrator could skip exactly the stack-specific reviewers the real PR needs. Fix direction: switch EXT_SUMMARY derivation to `gh pr diff "$PR_NUMBER" --name-only`.
+- **HIGH — PR-scoped lock fd collision (SKILL.md:291).** `exec 9>"$LOCK_PATH"` replaces the per-worktree lock from Step 0.4 instead of supplementing it. A second `/arp` from the same checkout targeting a different PR reacquires `.arp.lock` and runs concurrently in the same working tree, racing auto-fixes and commits. Fix direction: use fd 8 for PR-scoped lock, keep fd 9 for per-worktree; release both in Step 2.6.
+- **MED — PR-context silent fallback (SKILL.md:255).** Fetch failures (auth expiry, rate limits, transient API errors) flatten to the same empty-pullRequest fallback as "no prior discussion". Engines lose both dismissal-suppression and unresolved-thread confidence lowering with no warning. Fix direction: track a `context_fetch_failed` flag, set `truncation_warning: true` on the flag so engines treat the context as untrustworthy.
+
+### Validation debt
+
+Gemini /ce:review dispatch never completed on release day. Flash bucket produced 7× `429 Too Many Requests`, Pro bucket produced 28× 429 within ~2 minutes — Google is rate-limiting the whole onchainyaotoshi account from cumulative Gemini usage across v5.1.0 yesterday plus rc1→rc6 today. The rc5 fork-side allowlist guard is therefore shipped with its *mechanism* tested (prose reads as a hard-stop, prompt structure correct, installed copy synced) but not its *effect under real load* (no observation of whether Gemini flash-tier still hallucinates `generalist` with the guard in place). Next-day retry once the quota bucket resets will close this loop; if the guard proves insufficient, v5.2.1 will add a post-dispatch allowlist enforcement on the parsed Gemini output as a runtime check.
+
 ## 5.2.0-rc6 — 2026-04-15
 
 Caught during rc5's own dispatch attempt (the first /arp run after reinstalling rc5 to the plugin cache). The skill loader substituted `$0` → `--dry-run`, `$1` → `3`, `$2` → empty inside the rc5 EXT_SUMMARY awk block. Rendered code was syntactically broken (`split(--dry-run,a,"/")`, `printf "%s(%d) ",,3`), and `EXT_SUMMARY` would have been empty on every dispatch — meaning rc5's ARP-side hallucination mitigation layer did literally nothing, on top of being a broken shell snippet.

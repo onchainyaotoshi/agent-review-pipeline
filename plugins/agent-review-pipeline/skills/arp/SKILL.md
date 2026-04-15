@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.2.0-rc6
+version: 5.2.0
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Fetches PR conversation context (comments, reviews, unresolved threads) for cross-iteration continuity. Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** v5.2.0-rc6 — fixes rc5's silently-broken EXT_SUMMARY derivation. rc5 shipped the hint-injection feature using `awk '{... $0 ... $1 ... $2 ...}'`, but the Claude Code skill loader substitutes `$0`/`$1`/`$2` with `/arp`'s CLI args before the snippet executes, turning the awk body into syntactically broken code and leaving `EXT_SUMMARY` empty on every dispatch. rc6 rewrites the block with pure bash parameter expansion (`${f##*.}`, named loop vars `_f`/`_e`/`_cnt`/`_ext`) so nothing looks like a positional arg to the loader. Smoke-tested against the current PR diff: produces `md(4) json(2) gitignore(1)` as expected. rc5's other mitigation layer (the fork-side skill-name allowlist guard at `compound-engineering-plugin/ce-review/SKILL.md` Stage 4) was never affected by this bug and remains in effect. rc4's HIGH fixes (pagination awareness + sentinel fail-closed) and cleanup glob fix also remain. See CHANGELOG for the full rc1→rc6 trail.
+> **Status:** v5.2.0 GA — PR conversation context fetching, expanded rules glob, GraphQL pagination awareness, sentinel fail-closed, orchestrator-hallucination mitigation (fork allowlist + ARP domain hint). Shipped after 6 rc cycles on the same day as v5.1.0. 3 Codex self-review findings from the rc6 dispatch are tracked as known-open and deferred to v5.2.1: EXT_SUMMARY/gh-pr-diff source divergence (HIGH), PR-scoped lock fd collision with per-worktree lock (HIGH), PR-context silent fallback masking transient fetch errors (MED). Gemini /ce:review validation of the fork allowlist guard is deferred until the Google daily quota bucket resets — Flash and Pro both 429'd the whole dispatch window on release day from cumulative rc1→rc6 usage. See CHANGELOG for rc-by-rc history.
 
 # Agent Review Pipeline (`/arp`)
 
