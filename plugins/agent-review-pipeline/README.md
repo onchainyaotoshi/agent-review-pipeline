@@ -11,7 +11,7 @@ Autonomous dual-engine code review pipeline for [Claude Code](https://claude.ai/
 
    **Why asymmetric:** Gemini already has `/ce:review`. Running ARP-side dual-framing on top of it would duplicate work. Codex has no equivalent, so ARP provides the framing discipline for Codex.
 
-2. **Confidence-Weighted Consensus** — Findings fingerprinted as `sha1(file:line:issue)`. Multi-source agreement boosts confidence by `+0.15` per extra source (cap 1.0). Findings below `0.60` dropped.
+2. **Confidence-Weighted Consensus** — Findings fingerprinted by `file:line:severity:normalize(issue):sha1(fix_code[:200])`. Multi-source agreement boosts confidence by `+0.15` per extra source (cap 1.0). Findings below `0.60` dropped.
 
 3. **Bounded Auto-Fix Loop** — Applies `fix_code` via Edit tool, re-runs until PASS or `maxIterations` (1-10, default 3). Unlimited intentionally unsupported.
 
@@ -55,7 +55,7 @@ Use `/arp codex` or `/arp gemini` to force a single engine if the other isn't av
 
 ## Usage
 
-Auto-detect target, 3-dispatch review:
+Auto-detect open PR for current branch, 3-dispatch review:
 ```
 /arp
 ```
@@ -65,16 +65,13 @@ Review a specific PR:
 /arp 42
 ```
 
-Review specific files:
-```
-/arp src/auth.js src/handlers/
-```
-
 Preview without editing files:
 ```
 /arp --dry-run
 /arp --dry-run 42
 ```
+
+> PR is the sole review target. ARP requires `gh` CLI authenticated. If the current branch has no open PR, push and open one first or pass `<PR number>` explicitly.
 
 ### Engine Selection
 
@@ -105,7 +102,7 @@ Or just ask Claude: *"Review PR 42"* / *"Check this before commit"*.
 | `maxIterations` | `3` | Auto-fix retry limit. Range 1-10. |
 | `failOnError` | `false` | Abort on stage failure instead of escalating |
 | `defaultEngine` | `"both"` | `both`, `codex`, `gemini` |
-| `geminiModel` | `"gemini-3.1-pro-preview"` | Passed to `gemini -m`. Verify with `gemini models list`. |
+| `geminiModel` | `"gemini-3-flash-preview"` | Passed to `gemini -m`. Default is 3-flash-preview because rc13 e2e proved this Gemini-3 Flash deployment + the fork's sequential persona spawn delivers real findings JSON within the 10-minute headless budget — Pro deployments (`gemini-3.1-pro-preview`, `gemini-2.5-pro`) fail with `MODEL_CAPACITY_EXHAUSTED` 429s. Override to `gemini-3.1-pro-preview` when Pro server-cap recovers and you want max quality. Cascade on 429: `<geminiModel>` → (gated `ALLOW_FLASH_FALLBACK=1`) `gemini-3.1-flash-lite-preview`. |
 | `autoCommit` | `false` | Auto-commit fixes. **Off by default** — review first. |
 | `postPrComment` | `false` | Auto-post summary via `gh pr comment`. **Off by default**. |
 | `dryRun` | `false` | Run review without Edit / commit / PR comment |

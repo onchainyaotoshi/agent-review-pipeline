@@ -2,3 +2,8 @@
 .arp_stage_prompt.md
 .arp_session_log.json
 .arp_session_log.*.json
+.arp.lock
+.arp_parse_error_*.txt
+
+# Gemini CLI workspace cache — may be created inside project root during /ce:review dispatch
+.gemini/
