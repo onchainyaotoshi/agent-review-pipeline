@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.2.0
+version: 5.2.1
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Fetches PR conversation context (comments, reviews, unresolved threads) for cross-iteration continuity. Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** v5.2.0 GA — PR conversation context fetching, expanded rules glob, GraphQL pagination awareness, sentinel fail-closed, orchestrator-hallucination mitigation (fork allowlist + ARP domain hint). Shipped after 6 rc cycles on the same day as v5.1.0. 3 Codex self-review findings from the rc6 dispatch are tracked as known-open and deferred to v5.2.1: EXT_SUMMARY/gh-pr-diff source divergence (HIGH), PR-scoped lock fd collision with per-worktree lock (HIGH), PR-context silent fallback masking transient fetch errors (MED). Gemini /ce:review validation of the fork allowlist guard is deferred until the Google daily quota bucket resets — Flash and Pro both 429'd the whole dispatch window on release day from cumulative rc1→rc6 usage. See CHANGELOG for rc-by-rc history.
+> **Status:** v5.2.1 — patch release closing the 3 Codex self-review findings from the v5.2.0 rc6 dispatch: (a) EXT_SUMMARY now sources from `gh pr diff "$PR_NUMBER" --name-only` to match the review target, not `git diff origin/$PR_BASE...HEAD` which diverged when local commits weren't pushed; (b) PR-scoped lock moved to fd 8 so it supplements the per-worktree fd 9 lock rather than replacing it — two /arp runs on different PRs in the same checkout now correctly serialize; (c) PR-context fetch failures now set a `context_fetch_failed:true` + `truncation_warning:true` overlay instead of being silently indistinguishable from "no prior discussion", and `jq` parse errors abort the pipeline rather than collapsing to `{}`. Gemini /ce:review validation of the v5.2.0 fork-side skill-name allowlist is still pending — Google daily quota bucket needs to reset before the next live dispatch. v5.2.0's shipped features (PR conversation context, expanded rules glob, pagination awareness, sentinel fail-closed, orchestrator-hallucination mitigation) are all retained unchanged. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -181,6 +181,12 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
    **Single GraphQL fetch** (no race between two API calls — Codex adversarial rc2 finding):
 
    ```bash
+   # v5.2.1 — track fetch-failure flag so transient auth/rate-limit
+   # errors don't get mistaken for "no prior discussion". On failure,
+   # the processed context gets `context_fetch_failed:true` and
+   # `truncation_warning:true` overlaid so engines know the block is
+   # unreliable instead of assuming an empty conversation.
+   CONTEXT_FETCH_FAILED=false
    ctx_tmp=.arp_pr_context.json.tmp
    REPO_NWO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
    REPO_OWNER="${REPO_NWO%%/*}"
@@ -212,6 +218,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
       && mv "$ctx_tmp" .arp_pr_context.json; then
      :
    else
+     CONTEXT_FETCH_FAILED=true
      printf '{"data":{"repository":{"pullRequest":{"title":"","body":"","author":null,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[]},"reviews":{"pageInfo":{"hasNextPage":false},"nodes":[]},"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}\n' \
        > .arp_pr_context.json
      rm -f "$ctx_tmp"
@@ -252,7 +259,18 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
            or (($pr.reviewThreads.nodes // []) | map(.comments.pageInfo.hasNextPage // false) | any)
          )
        }'
-   processed=$(jq -c "$jq_filter" .arp_pr_context.json 2>/dev/null || printf '{}')
+   processed=$(jq -c "$jq_filter" .arp_pr_context.json) || {
+     echo "ERROR: failed to normalize PR context (jq parse error) — aborting" >&2
+     exit 1
+   }
+   # v5.2.1 — overlay fetch-failure flag so engines treat the context
+   # as partial/unreliable rather than as a confident "no discussion".
+   # truncation_warning is forced true so the (c) clause in the engine
+   # instruction kicks in (treat context as partial, don't infer
+   # maintainer consensus from silence).
+   if [[ "$CONTEXT_FETCH_FAILED" == true ]]; then
+     processed=$(jq -cn --argjson p "$processed" '$p + {context_fetch_failed:true, truncation_warning:true}')
+   fi
    ```
 
    **Inject inside random sentinel marker, not XML tags** (rc2 tag-break-via-`</pr_context>` fix). Generate a per-run sentinel that the attacker cannot predict; this prevents both XML-tag-break attacks AND the JSON-string-instruction attack:
@@ -285,17 +303,19 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 
    **Fail-open on empty:** the GraphQL fallback writes a structurally-valid empty pullRequest object so `jq` always succeeds and `processed` is never raw shell input. Empty maintainer context is the normal case for a fresh PR — proceed without aborting.
 
-   **Cross-worktree PR-scoped lock (rc3 — implements Codex adversarial finding from rc2 instead of deferring).** Replaces the per-cwd `.arp.lock` from Step 0.4 when a PR number is known. Two `/arp` runs in two worktrees of the same repo will now serialize on the same PR rather than racing. Falls back to the per-cwd lock when not in a git repo or PR number is missing.
+   **Cross-worktree PR-scoped lock (rc3 — implements Codex adversarial finding from rc2 instead of deferring; fd fixed in v5.2.1).** Supplements the per-cwd `.arp.lock` from Step 0.4 when a PR number is known. The per-worktree lock stays on fd 9; the PR-scoped lock uses fd 8. Both are held in parallel so a second `/arp` run in the same working tree targeting a different PR cannot reacquire `.arp.lock` and race auto-fixes. v5.2.0 reused fd 9 which silently replaced the per-worktree lock — fixed here.
 
    ```bash
    GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null) || GIT_COMMON=
    if [[ -n "$GIT_COMMON" && -n "$PR_NUMBER" ]]; then
      mkdir -p "$GIT_COMMON/arp-locks"
      LOCK_PATH="$GIT_COMMON/arp-locks/pr-$PR_NUMBER.lock"
-     exec 9>"$LOCK_PATH"
-     flock -n 9 || { echo "Another /arp run is already active for PR #$PR_NUMBER"; exit 1; }
+     exec 8>"$LOCK_PATH"
+     flock -n 8 || { echo "Another /arp run is already active for PR #$PR_NUMBER"; exit 1; }
    fi
-   # else the per-cwd .arp.lock acquired in Step 0.4 stays in effect.
+   # The per-worktree .arp.lock acquired in Step 0.4 (fd 9) is always held
+   # in parallel — it guards against two concurrent /arp runs in the same
+   # working tree regardless of PR number.
    ```
 
 9. Initialize `.arp_session_log.json` with empty findings.
@@ -345,12 +365,19 @@ Per-model dispatch uses `timeout 1800` (30 min) — accommodates sequential pers
 **Domain hint (rc5 — reduce orchestrator cognitive load).** Before writing the prompt body, compute a file-extension summary from the PR diff so Gemini's orchestrator doesn't have to scan the diff twice to decide which stack-specific personas apply. Flash-tier orchestrators have been observed hallucinating skill names (`generalist` on the rc3 diff) under the cognitive load of doing full 17-persona selection reasoning against a dense diff from scratch. Pre-computing the extension summary narrows the selection problem to the actually-relevant subset before the model starts reasoning, which complements the fork-side allowlist guard (ce-review SKILL.md's Stage 4 "Skill name allowlist").
 
 ```bash
-# rc6: pure bash param expansion — no awk positional fields ($0/$1/$2),
-# because the Claude Code skill loader substitutes those tokens with the
-# /arp CLI args before the snippet executes (rc5 shipped the awk form
-# and silently produced empty EXT_SUMMARY on every dispatch).
+# v5.2.1 — source from `gh pr diff --name-only` to match the actual
+# review target (Step 0.7 uses `gh pr diff <n>`). v5.2.0-rc6 used
+# `git diff --name-only "origin/$PR_BASE...HEAD"` which diverges from
+# the PR head whenever local commits are unpushed; the summary then
+# described the wrong file set and the prompt could tell Gemini to
+# skip stack-specific reviewers the real PR actually needed.
+#
+# Pure bash param expansion — no awk positional fields ($0/$1/$2) —
+# because the Claude Code skill loader substitutes those tokens with
+# the /arp CLI args before the snippet executes (v5.2.0-rc5 shipped
+# the awk form and silently produced empty EXT_SUMMARY).
 EXT_SUMMARY=$(
-  git diff --name-only "origin/$PR_BASE...HEAD" 2>/dev/null \
+  gh pr diff "$PR_NUMBER" --name-only 2>/dev/null \
     | while read -r _f; do
         _e="${_f##*.}"
         [[ "$_e" == "$_f" ]] && _e="noext"
@@ -462,7 +489,7 @@ GIT_AFTER=$(snapshot_git)
    **Telemetry:** record `{ "redactions_applied": <int>, "kinds": ["api-key", "credential", ...] }` in the session log under a top-level `redactions` field. If `redactions_applied > 0`, append a footer to the PR comment body: *"> Note: N strings matching secret-pattern heuristics were redacted from this comment. The original session log is kept locally (gitignored) for human review."*
 
    **Scope note (rc7):** redaction applies to the PR comment body, parse-error artifacts (scrubbed at write-time, see JSON Robustness step 2), and rotated session logs (scrubbed on rotation, see Step 2.6). The active session log stays raw during the run because kill-switch fingerprint matching reads it back — but it lives in memory of the iteration, is gitignored, and is scrubbed before archival. Live `.arp_*` artifacts in the working directory between iterations should still be treated as sensitive (don't paste, don't upload). Fully runtime-side scrubbing of in-memory dispatch buffers is the only remaining attack surface and is deferred to the runtime-rewrite branch.
-6. Clean up `.arp_stage_prompt.md`, `.arp_pr_context.json`, `.arp_pr_threads.json`, `.arp_repository_rules.md`, and any `.arp_*.tmp` leftovers (rc4 glob fix — the `.arp_pr_context.json.tmp` atomic-write sidecar uses dot-tmp, not underscore; rc3's `.arp_*_tmp` glob silently failed to match so the sidecar could linger across runs), then release the lock via `flock -u 9` (then `rm -f .arp.lock`). **Scrub the session log on rotation:** before renaming `.arp_session_log.json` to `.arp_session_log.<timestamp>.json`, run the rc5 scrubber over the JSON file's string values (file content, issue text, fix_code) — the active log stays raw during the run for kill-switch fingerprint matching, but the archived copy is scrubbed so secret material doesn't accumulate across runs. If the scrubber errors, abort rotation rather than archive raw content (matches Step 2.5 fail-closed semantics). Prune `.arp_session_log.*.json` and `.arp_parse_error_*.txt` older than 7 days from the repo root to prevent unbounded growth.
+6. Clean up `.arp_stage_prompt.md`, `.arp_pr_context.json`, `.arp_pr_threads.json`, `.arp_repository_rules.md`, and any `.arp_*.tmp` leftovers (rc4 glob fix — the `.arp_pr_context.json.tmp` atomic-write sidecar uses dot-tmp, not underscore; rc3's `.arp_*_tmp` glob silently failed to match so the sidecar could linger across runs), then release both locks via `flock -u 8 2>/dev/null || true; flock -u 9` (then `rm -f .arp.lock`). fd 8 is the PR-scoped lock from Step 0.8 (may be absent if no PR number or not in a git repo); fd 9 is the always-held per-worktree lock from Step 0.4. **Scrub the session log on rotation:** before renaming `.arp_session_log.json` to `.arp_session_log.<timestamp>.json`, run the rc5 scrubber over the JSON file's string values (file content, issue text, fix_code) — the active log stays raw during the run for kill-switch fingerprint matching, but the archived copy is scrubbed so secret material doesn't accumulate across runs. If the scrubber errors, abort rotation rather than archive raw content (matches Step 2.5 fail-closed semantics). Prune `.arp_session_log.*.json` and `.arp_parse_error_*.txt` older than 7 days from the repo root to prevent unbounded growth.
 
 ## Safety Rails
 

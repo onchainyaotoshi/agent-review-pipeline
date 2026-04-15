@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.2.1 — 2026-04-15
+
+Patch release closing all three Codex self-review findings from the v5.2.0 rc6 dispatch. Gemini validation of v5.2.0's fork-side skill-name allowlist is still pending (Google daily quota bucket needs to reset); applying these patches without waiting because they're independently verifiable from the Codex findings and the fixes are targeted.
+
+### Fixed (HIGH)
+
+- **EXT_SUMMARY source divergence.** v5.2.0's `EXT_SUMMARY` derived from `git diff --name-only "origin/$PR_BASE...HEAD"`, but Step 0.7 feeds the review from `gh pr diff <n>`. On branches where the local tree has commits not yet pushed to the PR, the summary described the wrong file set — the prompt could tell Gemini to skip stack-specific reviewers the real PR actually needed, defeating the whole hint mechanism. v5.2.1 sources from `gh pr diff "$PR_NUMBER" --name-only` so the summary always matches the review target. Surfaced by both Codex framings (correctness 0.9 + adversarial 0.98) — the two independent framings converging on the same line is exactly the cross-source agreement the pipeline's confidence boost is designed for.
+- **PR-scoped lock fd collision.** v5.2.0's Step 0.8 did `exec 9>"$LOCK_PATH"` to add a cross-worktree PR-scoped lock, but fd 9 was already in use for the per-worktree `.arp.lock` from Step 0.4. The `exec 9>` silently replaced the per-worktree lock descriptor. Consequence: a second `/arp` run in the same working tree targeting a *different* PR number could reacquire `.arp.lock` unnoticed and race auto-fixes / commits / PR comments against the first run. v5.2.1 moves the PR-scoped lock to fd 8 so it supplements rather than replaces fd 9. Both locks are held in parallel; Step 2.6 releases both on exit. Codex adversarial 0.97.
+
+### Fixed (MED)
+
+- **PR-context silent fallback masks transient fetch errors.** v5.2.0's fetch path wrote a structurally-empty `pullRequest` object whenever `gh api graphql` / `jq -e` / `mv` failed, and the downstream normalization did `jq ... 2>/dev/null || printf '{}'`. Result: a transient auth failure, rate limit, or API error looked identical to "no prior discussion" — engines would lose both explicit-dismissal suppression and unresolved-thread confidence lowering, with no warning to either the engine or the operator. v5.2.1 tracks a `CONTEXT_FETCH_FAILED` flag in the fetch branches; when true, the processed context gets `context_fetch_failed:true` + `truncation_warning:true` overlaid via `jq -cn --argjson p "$processed" '$p + {...}'`. The `truncation_warning:true` overlay activates the engine's existing partial-context behavior (clause c of the prompt instruction) — no new engine prompt wording needed. Also removes the `2>/dev/null || printf '{}'` suppression on the primary jq call so parse errors abort with a clear message instead of silently emptying the whole context block. Codex adversarial 0.92.
+
+### Not changed
+
+- v5.2.0's PR conversation context, expanded rules glob, pagination awareness, sentinel fail-closed, and orchestrator-hallucination mitigation layers (ARP domain hint + fork allowlist guard) are retained unchanged.
+- Gemini /ce:review halu-fix validation is still deferred — Google daily quota bucket exhausted across Flash and Pro on v5.2.0 release day. Next-day retry once the bucket resets. If the guard proves insufficient under load, v5.2.2 would add post-dispatch allowlist enforcement on the parsed Gemini output.
+
+### Tag
+
+`v5.2.1` on `main` after direct patch commit (no PR — findings were already surfaced by the live v5.2.0 dispatch; patch is scoped to the 3 specific fixes).
+
 ## 5.2.0 — 2026-04-15 (GA)
 
 Six-rc cycle on the same day as v5.1.0 GA. Shipped after Codex dual-framing produced a findings JSON on rc6 dispatch; Gemini /ce:review validation of the fork-side skill-name allowlist is deferred to the next day because the Google daily quota bucket exhausted across both Flash and Pro mid-release.
