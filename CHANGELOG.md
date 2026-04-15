@@ -1,5 +1,39 @@
 # Changelog
 
+## 5.0.0-rc15 — 2026-04-15
+
+Applies 7 actionable findings from the rc14 full e2e (Codex × 2 + Gemini × 1 = 18 raw → ~14 distinct after fingerprint merge), plus a user-directed timeout bump.
+
+### Fixed (CRIT/HIGH)
+
+- **A6 (CRIT) — Repository-rule prompt injection.** Step 0.6 used to inject `AGENTS.md` / `CLAUDE.md` / `.cursorrules` / `CONTRIBUTING.md` from the PR's working tree into every engine prompt. Those files are attacker-controlled on a malicious PR — they could suppress findings, redirect tool use, or exfiltrate context. rc15 now resolves the PR base ref via `gh pr view --json baseRefName` and reads each rules file from `git show origin/<base>:<file>` instead. The working-tree copy is never injected.
+- **G2 (HIGH) — PR number shell-injection guard.** Step 0.1 now validates the resolved PR number against `^[0-9]+$` before any shell interpolation. Reject with explicit error if it contains anything else. Closes the symmetric injection vector to rc2's `<ref>` validation.
+- **A3 (HIGH) — autoCommit `git add .` sweeps unrelated files.** Step 2.4 changed to `git add -u`. ARP-applied edits are tracked-file modifications, so `-u` covers the legitimate set without sweeping in editor backups, secrets, or developer scratch present in the working tree.
+- **A8/C2 (HIGH) — Fallback model contradictory text.** rc12-rc14 model-name churn left contradictory imperatives in SKILL.md (line 190 Headless model-ID note vs Safety Rails). Swept all `gemini-2.5-flash` references that should be `gemini-3.1-flash-lite-preview` (the actual rc13 cascade target). Also dropped the redundant arch-table reference to the old `git status` write-check (the canonical wrapper has used `snapshot_git` since rc3).
+
+### Fixed (MEDIUM)
+
+- **A9 (MEDIUM, fork-side) — ce-review parallel/sequential contradiction.** The fork's `compound-engineering-plugin@917a6f2` updates Stage 4 generic spawn text and the CE-always-on dispatch paragraph to defer to the Gemini CLI sequential default. Without this, the imperative "Spawn each selected persona reviewer as a parallel sub-agent" earlier in Stage 4 could re-trigger the parallel spawn that rc13's `adc218e` was designed to eliminate.
+- **G1 (MEDIUM) — `normalize()` GNU-only `sed` syntax.** Switched to `sed -E 's/[[:space:]]+...'`. Now portable to BSD/macOS so fingerprint computation produces identical hashes regardless of the operator's `sed` flavor.
+
+### Changed
+
+- **`timeout 600` → `timeout 1800` per Gemini dispatch (user directive).** rc7's 10-minute cap was tight enough for parallel persona spawn (which would either complete fast or hang outright); rc13's sequential persona spawn realistically takes 10-15 minutes. 30 minutes accommodates that with headroom while still protecting against true infinite hangs. Updated everywhere: arch table, model cascade narrative, dispatch wrapper, Safety Rails.
+
+### Triaged-skipped (with rationale, deferred)
+
+- A1 (HIGH) TOCTOU rollback bypass on `snapshot_git` — needs sandbox/worktree isolation, architectural, deferred to runtime-rewrite.
+- A2 (MED) `flock -u 9 && rm -f .arp.lock` unlink race — design intent (lock should be removable for operator visibility).
+- A4 + G4 (MED) Scrubber missing `github_pat_` / `AIza` / `ya29.` patterns — proper fix is entropy-based gating, not threshold lowering. Deferred to runtime-rewrite scrubber rework.
+- A5 (MED) `<ref>` is PR number passed as `base:<git-ref>` — needs investigation; ce:review may interpret PR numbers correctly via gh integration.
+- A7 (HIGH) Gemini wrapper exit-status not checked — partial overlap with rc13 cascade text; cascade-aware retry needs fuller treatment than current spec.
+- C1 vs G3 (LOW conflict) — Codex says geminiModel description not detailed enough, Gemini says too verbose. Current state (rc14 verbose form) kept.
+- C3, C4 (LOW) — Recurring "stale doc" findings on lines that were supposed to be fixed in earlier rc rounds. Investigate if Codex correctness is misreading or if drift never actually patched. Deferred to a documentation audit rc.
+
+### Per memory `feedback-merge-after-e2e-pass.md`
+
+Gate was already PASSED in rc13. rc15 hardens the pipeline based on its own dogfooded findings. Re-running e2e against rc15 itself (the natural compound-engineering loop) is the next step before tagging.
+
 ## 5.0.0-rc14 — 2026-04-15
 
 ARP eats its own dogfood. The rc13 e2e dispatch produced 5 findings JSON from Gemini ce:review; rc14 triages and applies them.

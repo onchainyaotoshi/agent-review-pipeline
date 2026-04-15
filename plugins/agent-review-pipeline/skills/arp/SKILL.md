@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc14
+version: 5.0.0-rc15
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** Release candidate (rc14) — first end-to-end Gemini-side validation passing in rc13; rc14 applies 2 actionable findings from that very run (geminiModel description sync, normalize() newline handling) and triages 3 others (1 hallucinated, 1 risky, 1 already self-acknowledged). The rc14 dispatch loop literally consumed its own output. See CHANGELOG.
+> **Status:** Release candidate (rc15) — applies 7 actionable findings from rc14's full e2e (Codex × 2 + Gemini × 1 = 18 raw → ~14 distinct after merge): repo-rules-injection (CRIT, base-branch fetch), PR number shell-injection guard, autoCommit `git add .` → `git add -u`, fallback model name sweep, fork sequential/parallel contradiction (fork commit `917a6f2`), normalize() BSD `sed -E`, and the user-directed `timeout 600 → 1800` bump. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -25,7 +25,7 @@ Prompts are written to a temporary file `.arp_stage_prompt.md` to bypass OS argu
 | Engine | Dispatch | Target / Command | Framing |
 |--------|----------|------------------|---------|
 | `codex` | `Agent` tool | `codex:codex-rescue` subagent | ARP-controlled: runs **twice** — once per framing (correctness + adversarial) |
-| `gemini` | `Bash` tool | `timeout 600 gemini -m "<geminiModel>" --approval-mode yolo --include-directories ~/.gemini/commands/ce -p "$(cat .arp_stage_prompt.md)" -o text` — guarded by pre-dispatch `<ref>` validation + post-dispatch `git status` write-check | Delegated: `/ce:review` runs Gemini's compound-engineering multi-persona pipeline internally |
+| `gemini` | `Bash` tool | `timeout 1800 gemini -m "<geminiModel>" --approval-mode yolo --include-directories ~/.gemini/commands/ce -p "$(cat .arp_stage_prompt.md)" -o text` — guarded by pre-dispatch PR number + `<ref>` validation + post-dispatch `snapshot_git` diff write-check | Delegated: `/ce:review` runs Gemini's compound-engineering multi-persona pipeline internally |
 
 **Why asymmetric:** Gemini already has `/ce:review`, a structured multi-persona review pipeline with P0-P3 severity tiering. Running ARP-side dual-framing on top would be redundant. Codex has no equivalent, so ARP provides the dual-framing discipline for Codex via two separate dispatches.
 
@@ -79,7 +79,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 }
 ```
 
-- `fingerprint` = `sha1(file + ":" + line + ":" + severity + ":" + normalize(issue) + ":" + sha1(fix_code[:200]))`. `normalize` = lowercase + collapse whitespace + strip non-alphanumeric punctuation + trim. Severity and fix_code-hash prevent same-line distinct-bug collisions. Compute via bash helper: `normalize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[^a-z0-9 ]//g' | sed 's/^ //; s/ $//'; }` then `printf '%s:%s:%s:%s:%s' "$file" "$line" "$severity" "$(normalize "$issue")" "$(printf '%.200s' "$fix_code" | sha1sum | cut -c1-40)" | sha1sum | cut -c1-40`.
+- `fingerprint` = `sha1(file + ":" + line + ":" + severity + ":" + normalize(issue) + ":" + sha1(fix_code[:200]))`. `normalize` = lowercase + collapse whitespace + strip non-alphanumeric punctuation + trim. Severity and fix_code-hash prevent same-line distinct-bug collisions. Compute via bash helper: `normalize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/[^a-z0-9 ]//g' | sed 's/^ //; s/ $//'; }` (uses `sed -E` for BSD/macOS portability) then `printf '%s:%s:%s:%s:%s' "$file" "$line" "$severity" "$(normalize "$issue")" "$(printf '%.200s' "$fix_code" | sha1sum | cut -c1-40)" | sha1sum | cut -c1-40`.
 - `agreement.rate` = `both / (codex_only + gemini_only + both)`.
 - `source` lists exact dispatch origin (`codex:correctness`, `codex:adversarial`, `gemini:ce-review`) for debugging.
 
@@ -111,7 +111,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 ## How to Run
 
 ### Step 0: Context & Setup
-1. **Flag parsing:** recognize `--dry-run` (or `-d`), `-n N` / `--max-iterations N` (clamp to 1-10), `codex|gemini|both`, PR number. If no PR number is passed, auto-detect the open PR for the current branch via `gh pr view --json number -q .number`; if none exists, abort with *"No PR found for current branch — push and open a PR first, or pass a PR number explicitly"*. Local file-path review is no longer supported (removed in rc8 — PR is the sole review target).
+1. **Flag parsing:** recognize `--dry-run` (or `-d`), `-n N` / `--max-iterations N` (clamp to 1-10), `codex|gemini|both`, PR number. If no PR number is passed, auto-detect the open PR for the current branch via `gh pr view --json number -q .number`; if none exists, abort with *"No PR found for current branch — push and open a PR first, or pass a PR number explicitly"*. Local file-path review is no longer supported (removed in rc8 — PR is the sole review target). **PR number validation (rc15):** validate the resolved number against `^[0-9]+$` before any shell interpolation. Reject with *"Invalid PR number: <n> — must be a positive integer"* if it contains anything else. Blocks shell injection through attacker-supplied PR-number-shaped input.
 2. **Engine resolution (precedence order, first match wins):**
    - CLI token `codex`, `gemini`, or `both` passed to `/arp`
    - `defaultEngine` from `plugin.json` userConfig
@@ -149,7 +149,17 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
    ```
 
    This is a fail-closed pre-flight gate. The check covers both unstaged (`git diff --quiet HEAD`) and staged-but-not-committed (`git diff --cached --quiet`) changes. Untracked files are NOT a trigger — they're irrelevant to the diff dispatch.
-6. Scan repo root for `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `CONTRIBUTING.md`. Inject contents into the `<repository_rules>` block of every engine prompt.
+6. **Repo rules from trusted base, not PR head (rc15 — fixes prompt-injection vector).** The PR checkout is attacker-controlled — a malicious PR can modify `AGENTS.md` / `CLAUDE.md` / `.cursorrules` / `CONTRIBUTING.md` to inject instructions that suppress findings or steer auto-fix. Resolve the PR's base ref first, then read each rules file from the base copy:
+
+   ```bash
+   PR_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q .baseRefName)
+   git fetch origin "$PR_BASE" --quiet
+   for rules in AGENTS.md CLAUDE.md .cursorrules CONTRIBUTING.md; do
+     git show "origin/$PR_BASE:$rules" 2>/dev/null >> .arp_repository_rules.md || true
+   done
+   ```
+
+   Inject `.arp_repository_rules.md` contents into the `<repository_rules>` block of every engine prompt. If a rules file doesn't exist on the base ref, omit it silently. Never inject the working-tree copy.
 7. Resolve PR diff via `gh pr diff <n>` (where `<n>` was passed or auto-detected in step 1).
 8. Initialize `.arp_session_log.json` with empty findings.
 
@@ -187,9 +197,9 @@ Prompt: shared read-only contract + "You are a red-team attacker trying to break
 
 This combination empirically delivered 5 valid findings JSON in 4395 bytes within a 10-minute timeout — first successful Gemini-side e2e validation. Operators may override `geminiModel` to `gemini-3.1-pro-preview` when Pro server-cap recovers and they want max quality.
 
-**Headless model-ID note:** the canonical Gemini-3 Pro model ID for `gemini -p ... -m <id>` is `gemini-3.1-pro-preview` — the `-preview` suffix stays on the headless API ID even though the interactive model-selector shows it as just `gemini-3.1-pro`. The unsuffixed name is a display label for the Auto-mode UI, not a valid `-m` argument (returns 404 ModelNotFound). Verify with `gemini models list`. Same for `gemini-3-flash`, which is display-only — flash fallback uses `gemini-2.5-flash` (verified valid headless ID).
+**Headless model-ID note:** the canonical Gemini-3 Pro model ID for `gemini -p ... -m <id>` is `gemini-3.1-pro-preview` — the `-preview` suffix stays on the headless API ID even though the interactive model-selector shows it as just `gemini-3.1-pro`. The unsuffixed name is a display label for the Auto-mode UI, not a valid `-m` argument (returns 404 ModelNotFound). Verify with `gemini models list`. Same for `gemini-3-flash`, which is display-only — ARP's gated flash fallback is `gemini-3.1-flash-lite-preview` (verified valid headless ID, separate Flash-Lite quota bucket).
 
-Per-model dispatch uses `timeout 600` (10 min) — on timeout SIGTERM the subprocess and move to the next cascade step.
+Per-model dispatch uses `timeout 1800` (30 min) — accommodates sequential persona spawn (~10-15 min realistic) plus orchestrator overhead. On timeout SIGTERM the subprocess and move to the next cascade step. The 600s limit from rc7 was too tight once rc13's sequential-spawn fix landed; rc15 bumps it.
 
 **`<ref>` validation** — before interpolation, validate against `^[A-Za-z0-9/_.-]+$`. Reject with *"Invalid ref: <ref>"* if it contains quotes, newlines, or shell metacharacters. Prevents shell injection through attacker-controlled branch/PR refs.
 
@@ -221,7 +231,7 @@ snapshot_git() {
 GIT_BEFORE=$(snapshot_git)
 
 # 3. Dispatch — yolo approval + narrowed include-dir + hard timeout
-timeout 600 gemini -m "<geminiModel>" --approval-mode yolo \
+timeout 1800 gemini -m "<geminiModel>" --approval-mode yolo \
   --include-directories "$HOME/.gemini/commands/ce" \
   -p "$(cat .arp_stage_prompt.md)" -o text
 
@@ -277,7 +287,7 @@ GIT_AFTER=$(snapshot_git)
    - Per-source parse-error count with artifact path (e.g. *"gemini:ce-review — 1 parse error, raw at `.arp_parse_error_gemini-ce-review_iter1_*.txt`"*). Do not silent-skip.
 2. Print summary to stdout always.
 3. If `dryRun: true`: stop — do not commit, do not post.
-4. If `autoCommit: true`: execute `git add .` and `git commit -m "chore(arp): autonomous review fixes"`. Off by default.
+4. If `autoCommit: true`: execute `git add -u` (modifications to tracked files only — NOT `git add .` which would sweep in unrelated untracked files like editor backups, secrets, or developer scratch) and `git commit -m "chore(arp): autonomous review fixes"`. Off by default.
 5. If `postPrComment: true`: scrub the executive summary body for secrets/PII (see **Redaction** below), then post to GitHub PR via `gh pr comment`. Off by default. **Fail-closed:** if the scrubber errors or matches a pattern but cannot replace it, abort the post and print the failure — never publish raw on a redaction failure.
 
    **Redaction patterns** (case-insensitive where applicable, applied per-line):
@@ -303,8 +313,8 @@ GIT_AFTER=$(snapshot_git)
 - Gemini read-only enforced via **three-layer defence**: `mode:report-only` prompt flag, `--include-directories` scoped to `~/.gemini/commands/ce` only (not `~/.gemini`), and post-dispatch snapshot diff (tracked-file changes + new non-ignored files) that aborts on any modification. Gitignored runtime artifacts are deliberately excluded so legitimate state cannot false-positive the check. `--approval-mode yolo` is needed because `plan` blocks the shell access `/ce:review` requires.
 - Same scrubber pattern set (API keys, JWT-shaped tokens, PEM private-key blocks, inline credential assignments, bearer tokens) is applied at three points: (1) PR comment body before `gh pr comment` (Step 2.5), (2) parse-error artifact files at write-time (JSON Robustness step 2), (3) session log on rotation (Step 2.6). Fail-closed at every point — scrubber error aborts the action rather than writing/posting raw.
 - `<ref>` validated against `^[A-Za-z0-9/_.-]+$` before interpolation — blocks shell/prompt injection through attacker-controlled branch or PR refs.
-- Model cascade fallback to `gemini-2.5-flash` (Flash bucket, separate quota from Pro) requires explicit `ALLOW_FLASH_FALLBACK=1` env — prevents silent review-quality downgrade when Pro bucket is exhausted. The redundant `gemini-2.5-pro` hop was dropped in rc10 because it shares the Pro quota bucket. `gemini-3-flash` is not a valid headless `-m` argument (display-label only); use `gemini-2.5-flash` for headless flash fallback.
-- Per-model Gemini dispatch has a 10-minute `timeout 600` watchdog. On timeout, SIGTERM and move to next cascade step.
+- Model cascade fallback to `gemini-3.1-flash-lite-preview` (Flash-Lite bucket, separate quota from Flash) requires explicit `ALLOW_FLASH_FALLBACK=1` env — prevents silent review-quality downgrade. `gemini-3-flash` is not a valid headless `-m` argument (display-label only).
+- Per-model Gemini dispatch has a 30-minute `timeout 1800` watchdog (rc15, bumped from 600 to fit sequential persona spawn). On timeout, SIGTERM and move to next cascade step.
 - Concurrency guard uses real `flock -n` advisory lock on `.arp.lock`, not an mtime sniff — no TOCTOU window.
 - Pre-flight working-tree freshness check (Step 0.5) aborts when `git diff --quiet HEAD` or `git diff --cached --quiet` is non-clean. Prevents the "second /arp run reviews stale PR-HEAD diff while the local tree already has a previous run's fixes" failure mode — wasted dispatch quota plus mid-loop "old_string not found" Edit corruption. Skipped under `--dry-run` because peek mode applies no edits.
 
