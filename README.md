@@ -15,42 +15,50 @@ Autonomous dual-engine code review pipeline for [Claude Code](https://claude.ai/
 
 ```mermaid
 flowchart TD
-    Start([/arp PR]) --> Pre[Stage 0 Pre-flight<br/>deps · flock · gh auth · PR resolve<br/>+ PR conversation context fetch]
-    Pre --> Disp{Stage 1<br/>3 parallel dispatches}
+    Start([/arp PR]) --> Pre
 
-    Disp --> C1["Codex × Correctness<br/>Agent: codex-rescue<br/>read-only contract"]
-    Disp --> C2["Codex × Adversarial<br/>Agent: codex-rescue<br/>read-only contract"]
-    Disp --> G["Gemini × /ce:review<br/>Bash: gemini -p<br/>3-layer read-only"]
+    subgraph Stage0["Stage 0: Pre-flight"]
+        Pre[deps · flock · gh auth · PR resolve<br/>+ PR conversation context fetch]
+    end
 
-    C1 --> S1[snapshot_git diff]
-    C2 --> S2[snapshot_git diff]
-    G  --> S3[snapshot_git diff]
-    S1 --> M
-    S2 --> M
-    S3 --> M
+    subgraph Stage1["Stage 1: Review (dispatch → merge → fix → loop)"]
+        Disp{3 parallel dispatches}
+        Disp --> C1["Codex × Correctness<br/>Agent: codex-rescue<br/>read-only contract"]
+        Disp --> C2["Codex × Adversarial<br/>Agent: codex-rescue<br/>read-only contract"]
+        Disp --> G["Gemini × /ce:review<br/>Bash: gemini -p<br/>3-layer read-only"]
+        C1 --> S1[snapshot_git diff]
+        C2 --> S2[snapshot_git diff]
+        G  --> S3[snapshot_git diff]
+        S1 --> M
+        S2 --> M
+        S3 --> M
+        M[Merge + Fingerprint<br/>file:line:severity:issue:fix-hash<br/>+0.15 per source · drop conf below 0.60]
+        M --> L{any findings?}
+        L -- yes --> K{fingerprint<br/>seen before?}
+        K -- yes --> E[ESCALATE<br/>human review]
+        K -- no --> F[Apply fix_code via Edit tool]
+        F --> I{iter < max?}
+        I -- yes --> Disp
+        I -- no --> FE{failOnError?}
+        FE -- true --> Ab([abort exit non-zero])
+        FE -- false --> E
+    end
 
-    M[Merge + Fingerprint<br/>file:line:severity:issue:fix-hash<br/>+0.15 per source · drop conf below 0.60]
-    M --> L{any findings?}
+    subgraph Stage2["Stage 2: Deliver"]
+        D[summary · agreement rate · parse-error counts]
+        D --> AC{autoCommit?}
+        AC -- true --> GC[git commit]
+        AC -- false --> PC{postPrComment?}
+        GC --> PC
+        PC -- true --> SCR[Scrub secrets<br/>API keys · JWT · creds · bearer]
+        SCR --> GH[gh pr comment]
+        GH --> End([end])
+        PC -- false --> End
+    end
+
+    Pre --> Disp
     L -- no --> D
-    L -- yes --> K{fingerprint<br/>seen before?}
-    K -- yes --> E[ESCALATE<br/>human review]
-    K -- no --> F[Apply fix_code via Edit tool]
-    F --> I{iter < max?}
-    I -- yes --> Disp
-    I -- no --> FE{failOnError?}
-    FE -- true --> Ab([abort exit non-zero])
-    FE -- false --> E
     E --> D
-
-    D[Stage 2 Deliver<br/>summary · agreement rate · parse-error counts]
-    D --> AC{autoCommit?}
-    AC -- true --> GC[git commit]
-    AC -- false --> PC{postPrComment?}
-    GC --> PC
-    PC -- true --> SCR[Scrub secrets<br/>API keys · JWT · creds · bearer]
-    SCR --> GH[gh pr comment]
-    GH --> End([end])
-    PC -- false --> End
 ```
 
 **Why asymmetric (the "3 dispatches from 2 engines" question):**
