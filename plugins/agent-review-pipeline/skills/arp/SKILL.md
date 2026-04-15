@@ -11,6 +11,8 @@ argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number | files]"
 
 Autonomous code review pipeline with dual-engine consensus, asymmetric dispatch (Codex dual-framing + Gemini `/ce:review`), bounded auto-fix loop, and loop-thrash protection. Pure review — regression verification is the CI's job.
 
+<!-- test comment for ARP e2e validation -->
+
 ## Prerequisites
 
 - **Codex plugin** installed: `/plugin install codex@openai-codex` (provides the `codex:codex-rescue` Agent).
