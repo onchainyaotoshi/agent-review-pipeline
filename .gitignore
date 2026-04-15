@@ -8,6 +8,7 @@
 .arp_pr_threads.json
 .arp_repository_rules.md
 .arp_*.tmp
+.arp_benchmark_*.json
 
 # Gemini CLI workspace cache — may be created inside project root during /ce:review dispatch
 .gemini/
