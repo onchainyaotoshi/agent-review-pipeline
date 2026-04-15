@@ -11,7 +11,7 @@
     {
       "name": "agent-review-pipeline",
       "description": "Autonomous code review pipeline with asymmetric dual-engine dispatch. Codex runs ARP's correctness + adversarial framings (2 dispatches); Gemini runs its own /ce:review compound-engineering pipeline (1 dispatch). 3 parallel perspectives per iteration by default. Fingerprinted findings with +0.15 confidence boost on multi-source agreement, findings below 0.60 dropped. Bounded auto-fix loop (1-10), loop-thrash kill switch, --dry-run flag, safe-off defaults for commit and PR comment.",
-      "version": "5.2.0-rc2",
+      "version": "5.2.0-rc3",
       "author": {
         "name": "Yaotoshi",
         "url": "https://github.com/onchainyaotoshi"

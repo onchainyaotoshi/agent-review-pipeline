@@ -1,5 +1,34 @@
 # Changelog
 
+## 5.2.0-rc3 — 2026-04-15
+
+rc2 was reviewed by ARP again. 9 findings (Codex × 2 + Gemini × 1) surfaced **2 HIGH bugs in rc2 itself** plus a third sneaky vulnerability that defeated rc2's entire prompt-injection fix.
+
+### Fixed (HIGH)
+
+- **rc2 `is_arp_post` jq filter was malformed.** The pipe in `(.author.login // "") | test(...) and ((.body // "") | test(...))` binds wrong: jq evaluates the right-hand `.body` against the boolean from `test()`, which throws `Cannot index string with string "body"`. Because the surrounding `processed=$(jq ... 2>/dev/null || printf '{}')` swallowed errors, **rc2 silently collapsed the entire PR-context feature to `{}` on every run**. Effectively the feature did nothing in rc2. rc3 fully parenthesizes both clauses of the `and` so the pipes bind correctly.
+- **rc2 bot-author regex bypassable as `github-actions-evil`.** The pattern `^(github-actions|app/|.*\\[bot\\]$)` only anchored `^` for the first alternative — `^github-actions` matched any login starting with `github-actions`. A real attacker registering `github-actions-evil` could craft a comment with the rc2 body-signature and have the comment dropped from PR context, suppressing whatever they wanted hidden from the reviewer. rc3 anchors both ends per alternative: `^(github-actions|app/[^[:space:]]+|.+\\[bot\\])$`.
+
+### Fixed (MEDIUM, but the most important rc2 bug)
+
+- **rc2 JSON-wrapped injection still tag-break-able.** rc2 wrapped processed PR context as JSON inside `<pr_context kind="json">{...}</pr_context>`. JSON does not escape forward slashes by default, so a malicious comment body containing the literal string `</pr_context>` would close the prompt tag prematurely and let raw text after that be interpreted as outside the data block. rc3 abandons XML tags entirely and uses session-random sentinels: `BEGIN_PR_CONTEXT_<8-byte-hex>` / `END_PR_CONTEXT_<8-byte-hex>`. The attacker cannot close the block without already knowing the run-time-generated hex.
+
+### Other rc2 findings applied
+
+- **Single GraphQL fetch** instead of `gh pr view` + `gh api graphql` (rc2 had a coherence-race). rc3 fetches title / body / author / comments / reviews / reviewThreads in one graphql query.
+- **mv-failure now handled.** rc2's atomic write was `if jq -e ...; then mv ...; else fallback; fi` — `mv` failure inside `then` did not fall through. rc3 chains `&& mv ... ; then :` so any failure path lands in the `else` fallback that always writes a structurally-valid empty PR object.
+- **Truncation marker length corrected.** rc2 used `n - 13`; the `…[truncated]` marker is 12 chars (Unicode ellipsis = 1 codepoint, `[truncated]` = 11). rc3 uses `n - 12`. Caps now real to the documented limit.
+- **Cross-worktree PR-scoped lock implemented**, not deferred. Replaces the per-cwd `.arp.lock` when both `git rev-parse --git-common-dir` and `$PR_NUMBER` resolve. Two `/arp` runs in two worktrees of the same repo on the same PR now serialize correctly. Falls back to per-cwd lock outside a git repo or with no PR.
+- **Frontmatter description updated** to mention PR conversation context fetch (was stale per Gemini process-compliance finding).
+
+### Triage-skipped
+
+- Two LOW findings about doc nits (frontmatter description was actually fixed; cleanup glob mismatch noted but rc2 already fixed it).
+
+### Lesson
+
+Three consecutive rcs (rc1, rc2, rc3) on the same feature — each surfaced bugs in the previous rc that ARP itself caught via the dogfood loop. The pipeline empirically demonstrates compound-engineering value: it would have shipped a feature that did nothing (rc2 silent-empty), with a bypassable bot filter, and a still-injectable wrapper, if no second self-review had happened. **rc3 is the one rc16 is expected to actually need.**
+
 ## 5.2.0-rc2 — 2026-04-15
 
 rc1 was reviewed by ARP itself (the natural test for the new conversation-context feature). 14 findings (Codex × 2 + Gemini × 1) surfaced 2 HIGH+ blockers and a fistful of medium/low cleanups. rc2 applies them.
