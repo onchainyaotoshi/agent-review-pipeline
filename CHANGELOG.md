@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.0.0-rc3 — 2026-04-15
+
+Two refinements surfaced by a same-day validation-probe pass against the Gemini fork:
+
+### Fixed
+
+- **Post-dispatch write-check no longer false-positives on gitignored runtime artifacts.** The rc2 check snapshot `git status --porcelain`, which flags every untracked file — so a harmless artifact like `.arp_*` or a Gemini workspace cache could abort the pipeline even though the actual repo state was clean. Snapshot now uses `git rev-parse HEAD`, `git diff HEAD | sha1sum`, and `git ls-files --others --exclude-standard`. Gitignored paths (legit runtime state) are deliberately excluded; tracked-file modifications and new non-ignored files are still caught.
+
+### Documented
+
+- **Flash fallback is empirically dead for `/ce:review`.** 2026-04-15 probes: flash with slash-form prompt hung silent for 10 min producing 0 bytes; flash with natural-language prompt exited clean at 5m46s with a polite "quota exhausted, unable to complete" (363 bytes, no findings). The `ALLOW_FLASH_FALLBACK=1` gate from rc2 stays — strengthened abort message now cites this evidence so operators don't flip the gate expecting a usable review.
+
 ## 5.0.0-rc2 — 2026-04-15
 
 Addresses the 7 findings from the first end-to-end validation run (PR #1), 3 of which were critical/high security issues introduced by rc1's Gemini dispatch hardening. Still rc — `/ce:review` under `-p` headless mode remains a known reliability risk (observed in the PR #1 run: the dispatch hung 41 min on `gemini-2.5-flash` and was SIGTERMed).

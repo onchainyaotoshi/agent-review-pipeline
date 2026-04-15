@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc2
+version: 5.0.0-rc3
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number | files]"
 ---
 
-> **Status:** Release candidate (rc2). First e2e validation (PR #1, 2026-04-15) surfaced 3 security issues in rc1's Gemini dispatch — all addressed in this version. See CHANGELOG.
+> **Status:** Release candidate (rc3). rc2 addressed 3 security issues from PR #1's first e2e run; rc3 refines the post-dispatch write-check (no more false positives on gitignored runtime artifacts) and documents the empirically-dead flash fallback path. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -131,7 +131,7 @@ Prompt includes: "READ-ONLY review. Do not edit any file — output findings onl
 
 **Dispatch 3 — Gemini × /ce:review** (Bash tool):
 
-**Model cascade** — try `<geminiModel>` (default `gemini-3.1-pro-preview`), on `429`/quota error fall back to `gemini-2.5-pro`. **Fallback to `gemini-2.5-flash` is gated**: only allowed when env `ALLOW_FLASH_FALLBACK=1` is set, otherwise abort dispatch with *"Gemini pro-tier exhausted (3.1-pro-preview + 2.5-pro); set ALLOW_FLASH_FALLBACK=1 to accept flash (materially weaker review) or retry later"*. This prevents silent quality downgrade when an attacker or ambient usage exhausts pro quota. Per-model dispatch uses `timeout 600` (10 min) — on timeout SIGTERM the subprocess and move to the next cascade step.
+**Model cascade** — try `<geminiModel>` (default `gemini-3.1-pro-preview`), on `429`/quota error fall back to `gemini-2.5-pro`. **Fallback to `gemini-2.5-flash` is gated and discouraged**: only allowed when env `ALLOW_FLASH_FALLBACK=1` is set, otherwise abort dispatch with *"Gemini pro-tier exhausted (3.1-pro-preview + 2.5-pro); set ALLOW_FLASH_FALLBACK=1 to attempt flash (empirically unreliable for /ce:review — 2026-04-15 probes showed 10-min silent hang or polite quota-exhausted exit with 0 findings) or retry later"*. This prevents silent quality downgrade when an attacker or ambient usage exhausts pro quota. Per-model dispatch uses `timeout 600` (10 min) — on timeout SIGTERM the subprocess and move to the next cascade step.
 
 **`<ref>` validation** — before interpolation, validate against `^[A-Za-z0-9/_.-]+$`. Reject with *"Invalid ref: <ref>"* if it contains quotes, newlines, or shell metacharacters. Prevents shell injection through attacker-controlled branch/PR refs.
 
@@ -152,20 +152,28 @@ Schema: [{"file":"...","line":12,"severity":"...","confidence":0.85,"issue":"...
 REF="<ref>"
 [[ "$REF" =~ ^[A-Za-z0-9/_.-]+$ ]] || { echo "Invalid ref: $REF"; exit 1; }
 
-# 2. Snapshot git state for post-dispatch write detection
-GIT_BEFORE=$(git rev-parse HEAD 2>/dev/null; git status --porcelain 2>/dev/null)
+# 2. Snapshot git state for post-dispatch write detection.
+#    Excludes gitignored files (legit runtime artifacts like .arp_* cannot false-positive);
+#    still catches modified tracked files and newly-created non-ignored files.
+snapshot_git() {
+  git rev-parse HEAD 2>/dev/null
+  git diff HEAD 2>/dev/null | sha1sum
+  git ls-files --others --exclude-standard 2>/dev/null | sort
+}
+GIT_BEFORE=$(snapshot_git)
 
 # 3. Dispatch — yolo approval + narrowed include-dir + hard timeout
 timeout 600 gemini -m "<geminiModel>" --approval-mode yolo \
   --include-directories "$HOME/.gemini/commands/ce" \
   -p "$(cat .arp_stage_prompt.md)" -o text
 
-# 4. Post-dispatch write check — aborts pipeline if Gemini modified anything
-GIT_AFTER=$(git rev-parse HEAD 2>/dev/null; git status --porcelain 2>/dev/null)
+# 4. Post-dispatch write check — aborts pipeline if Gemini modified tracked files
+#    or created new non-ignored files.
+GIT_AFTER=$(snapshot_git)
 [[ "$GIT_BEFORE" == "$GIT_AFTER" ]] || { echo "Gemini write detected despite mode:report-only — aborting"; exit 2; }
 ```
 
-> Read-only enforced through **three layers**: (1) `mode:report-only` prompt flag, (2) `--include-directories` scoped to `~/.gemini/commands/ce` (not the whole `~/.gemini` tree — prevents credential exposure via `settings.json` MCP env/headers), (3) post-dispatch `git status --porcelain` diff check that aborts on any modification. `--approval-mode yolo` is necessary because `plan` blocks shell access which `/ce:review` needs for git/grep.
+> Read-only enforced through **three layers**: (1) `mode:report-only` prompt flag, (2) `--include-directories` scoped to `~/.gemini/commands/ce` (not the whole `~/.gemini` tree — prevents credential exposure via `settings.json` MCP env/headers), (3) post-dispatch snapshot diff (tracked-file changes + new non-ignored files) that aborts on any modification. Gitignored paths (e.g. `.arp_*` runtime artifacts, any future `.gemini/` workspace cache) are deliberately excluded so legitimate runtime state cannot false-positive the check. `--approval-mode yolo` is necessary because `plan` blocks shell access which `/ce:review` needs for git/grep.
 
 `<ref>` is the PR number or branch/ref passed to `/arp`. If reviewing local file paths, pass `HEAD` and include the list of paths in the prompt body.
 
