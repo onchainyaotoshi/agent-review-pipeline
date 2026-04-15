@@ -537,29 +537,29 @@ Compare Gemini Flash vs Pro findings quality on a specific PR. Read-only — no 
 ### Benchmark Setup
 
 Run Step 0 substeps with these modifications:
+- **Parse flags:** recognize `--dry-run` (or `-d`) from CLI args. `-n N`, `codex|gemini|both` engine tokens, and `maxIterations` are **ignored** in benchmark mode.
 - **Skip** engine resolution (benchmark always dispatches Gemini only)
 - **Skip** Codex dependency precheck
 - **Skip** working-tree freshness check (benchmark applies no edits)
 - **Run** Gemini dependency precheck (Step 0.3 Gemini branch), `gh` auth check, and concurrency guard (Step 0.4) normally
 - **Run** repo-rules fetch (Step 0.6), diff fetch (Step 0.7), and PR context fetch (Step 0.8) normally — benchmark uses the same trusted-base-ref rules and PR context
+- **Pro model pre-flight:** run `gemini -m gemini-3.1-pro-preview --version 2>/dev/null || gemini -m gemini-3.1-pro-preview -p "ping" -o text 2>/dev/null` with a 10s timeout. If non-0 exit, abort with: *"Pro model unavailable — run scripts/probe-gemini.sh gemini-3.1-pro-preview to diagnose. Pro tier may be capacity-exhausted."* Do not proceed to Flash dispatch.
 
 Acquire per-worktree `.arp.lock` (fd 9) and PR-scoped lock (fd 8) as normal. Both released on exit.
 
 ### Flash Dispatch
 
 Identical to Step 1 Dispatch 3 (Gemini × /ce:review) with these overrides:
-- Model: `gemini-3-flash-preview`
-- Prompt body: same template as Step 1 Dispatch 3 (including parallel-dispatch directive, EXT_SUMMARY, emphasis directive)
+- Model: same as Dispatch 3 (`gemini-3-flash-preview`) — no model change for Flash
+- Prompt body: same template as Step 1 Dispatch 3 (including parallel-dispatch directive, EXT_SUMMARY, emphasis directive). Recompute `EXT_SUMMARY` using the same bash block as Dispatch 3 before writing `.arp_stage_prompt.md`.
 - `snapshot_git` pre/post (same read-only enforcement)
 - Capture raw output as `FLASH_RAW`
 
 ### Pro Dispatch
 
 Identical to Flash Dispatch with these overrides:
-- Model: `gemini-3.1-pro-preview` (verified working headless — probe exit 0)
+- Model: `gemini-3.1-pro-preview` (pre-flight probe passed in Benchmark Setup)
 - Capture raw output as `PRO_RAW`
-
-If `gemini -m gemini-3.1-pro-preview` exits non-0 at dispatch time, abort benchmark with: *"Pro model unavailable — run scripts/probe-gemini.sh gemini-3.1-pro-preview to diagnose. Pro tier may be capacity-exhausted."*
 
 Both dispatches run sequentially (not in parallel) to avoid racing on shared `.arp_stage_prompt.md`.
 
@@ -604,6 +604,8 @@ elif only flash parse_failed:
     verdict = { flash: "PARSE FAILED", pro: "N/A", note: "" }
 elif only pro parse_failed:
     verdict = { flash: "N/A", pro: "PARSE FAILED", note: "" }
+elif flash.total_findings == 0 OR pro.total_findings == 0:
+    verdict = { flash: "N/A", pro: "N/A", note: "One or both dispatches returned 0 findings — cannot compare" }
 elif pro_precision > flash_precision + 0.10 AND pro_fp_rate < flash_fp_rate:
     verdict = { flash: "CHEAPER", pro: "MORE ACCURATE", note: "" }
 elif abs(pro_precision - flash_precision) <= 0.10:
