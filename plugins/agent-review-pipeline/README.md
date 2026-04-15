@@ -112,7 +112,13 @@ Or just ask Claude: *"Review PR 42"* / *"Check this before commit"*.
 ```
    ┌────────────────────────────────────────────┐
    │ 0. Context Setup                           │
-   │    Scan CLAUDE.md / AGENTS.md / etc.       │
+   │    Scan rules from PR base ref:            │
+   │      AGENTS.md, CLAUDE.md, .cursorrules,   │
+   │      CONTRIBUTING.md, .claude/rules/*.md,  │
+   │      .claude/CLAUDE.md, docs/CONVENTIONS*  │
+   │    Fetch PR conversation context:          │
+   │      title, body, comments, reviews,       │
+   │      unresolved review threads (GraphQL)   │
    │    Precheck: codex-rescue, gemini CLI,     │
    │    ~/.gemini/commands/ce/review.toml       │
    └──────────────────┬─────────────────────────┘

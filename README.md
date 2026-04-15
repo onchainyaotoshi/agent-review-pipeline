@@ -15,7 +15,7 @@ Autonomous dual-engine code review pipeline for [Claude Code](https://claude.ai/
 
 ```mermaid
 flowchart TD
-    Start([/arp PR]) --> Pre[Stage 0 Pre-flight<br/>deps · flock · gh auth · PR resolve]
+    Start([/arp PR]) --> Pre[Stage 0 Pre-flight<br/>deps · flock · gh auth · PR resolve<br/>+ PR conversation context fetch]
     Pre --> Disp{Stage 1<br/>3 parallel dispatches}
 
     Disp --> C1["Codex × Correctness<br/>Agent: codex-rescue<br/>read-only contract"]
