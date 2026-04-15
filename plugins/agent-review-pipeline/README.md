@@ -95,6 +95,17 @@ Preview without editing files:
 
 Or just ask Claude: *"Review PR 42"* / *"Check this before commit"*.
 
+### Pre-flight model probe
+
+Before a long `/arp` run, check that your Gemini model has headless server capacity:
+
+```
+scripts/probe-gemini.sh                       # probe default model
+scripts/probe-gemini.sh gemini-3.1-pro-preview
+```
+
+Exit `0` = model is responsive. Exit `2` or `3` = capacity exhausted; pick a different model or retry later. Saves you from burning the 30-minute dispatch timeout on retry storms.
+
 ## Configuration (`plugin.json` userConfig)
 
 | Key | Default | Description |
