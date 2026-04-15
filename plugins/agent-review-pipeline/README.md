@@ -102,7 +102,7 @@ Or just ask Claude: *"Review PR 42"* / *"Check this before commit"*.
 | `maxIterations` | `3` | Auto-fix retry limit. Range 1-10. |
 | `failOnError` | `false` | Abort on stage failure instead of escalating |
 | `defaultEngine` | `"both"` | `both`, `codex`, `gemini` |
-| `geminiModel` | `"gemini-3.1-pro-preview"` | Passed to `gemini -m`. Verify with `gemini models list`. |
+| `geminiModel` | `"gemini-3.1-pro"` | Passed to `gemini -m`. Verify with `gemini models list`. Cascade on 429: `gemini-3.1-pro` → (gated `ALLOW_FLASH_FALLBACK=1`) `gemini-3-flash`. |
 | `autoCommit` | `false` | Auto-commit fixes. **Off by default** — review first. |
 | `postPrComment` | `false` | Auto-post summary via `gh pr comment`. **Off by default**. |
 | `dryRun` | `false` | Run review without Edit / commit / PR comment |

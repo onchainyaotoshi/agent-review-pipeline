@@ -1,5 +1,32 @@
 # Changelog
 
+## 5.0.0-rc10 — 2026-04-15
+
+Model naming + cascade simplification driven by user inspection of Gemini CLI's quota dashboard.
+
+### Background
+
+The Gemini CLI model-selector reveals three separate quota buckets — **Pro**, **Flash**, **Flash Lite** — each with its own daily cap and per-minute rate limit. It also shows the canonical model names: `gemini-3.1-pro` and `gemini-3-flash` (no `-preview` suffix). The `-preview` variant we'd been pinning is a legacy alias.
+
+Our rc1-rc9 cascade (`gemini-3.1-pro-preview → gemini-2.5-pro → ALLOW_FLASH_FALLBACK gemini-2.5-flash`) had three issues:
+
+1. Used the legacy `-preview` alias instead of the canonical name.
+2. The `gemini-2.5-pro` fallback hop was useless — it shares the **Pro bucket** with `gemini-3.1-pro`, so a Pro-bucket exhaustion fails both at the same time.
+3. Flash fallback to `gemini-2.5-flash` jumped families. Stay in Gemini-3 by using `gemini-3-flash` for consistency in tokenization, prompt interpretation, and behavior.
+
+### Changed
+
+- **`geminiModel` default**: `gemini-3.1-pro-preview` → `gemini-3.1-pro` in `plugin.json` userConfig and SKILL.md.
+- **Cascade simplified**: `gemini-3.1-pro` → (gated) `gemini-3-flash`. Two hops instead of three. `gemini-2.5-pro` removed — it's redundant when both share the Pro bucket.
+- **Flash fallback model**: `gemini-2.5-flash` → `gemini-3-flash`. Stays in the Gemini-3 family.
+- **Abort message updated**: "Gemini Pro bucket exhausted" replaces "Gemini pro-tier exhausted (3.1-pro-preview + 2.5-pro)" since there's no `+ 2.5-pro` step anymore.
+- **README**: `geminiModel` row in plugin README now documents the cascade in the description column.
+
+### Notes
+
+- `-preview` may still work as an alias today, but pinning the canonical name protects against the alias being removed.
+- 2026-04-15 quota event was a per-minute rolling-window 429 (Gemini reported "1h32m" reset), not the daily-cap 23h+ reset visible in the model-selector. Both limits exist; the rolling-window one is what hit us today.
+
 ## 5.0.0-rc9 — 2026-04-15
 
 Closes a "second-run-on-stale-diff" foot-gun surfaced by user trace-through.
