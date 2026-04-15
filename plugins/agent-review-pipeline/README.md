@@ -123,7 +123,13 @@ Exit `0` = model is responsive. Exit `2` or `3` = capacity exhausted; pick a dif
 ```
    ┌────────────────────────────────────────────┐
    │ 0. Context Setup                           │
-   │    Scan CLAUDE.md / AGENTS.md / etc.       │
+   │    Scan rules from PR base ref:            │
+   │      AGENTS.md, CLAUDE.md, .cursorrules,   │
+   │      CONTRIBUTING.md, .claude/rules/*.md,  │
+   │      .claude/CLAUDE.md, docs/CONVENTIONS*  │
+   │    Fetch PR conversation context:          │
+   │      title, body, comments, reviews,       │
+   │      unresolved review threads (GraphQL)   │
    │    Precheck: codex-rescue, gemini CLI,     │
    │    ~/.gemini/commands/ce/review.toml       │
    └──────────────────┬─────────────────────────┘
