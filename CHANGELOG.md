@@ -1,5 +1,34 @@
 # Changelog
 
+## 5.3.2 — 2026-04-15
+
+First v5.3.x patch from a live dogfood dispatch on a real downstream consumer. Target: `camis_api_native` PR #251 ("fix(tabulator-filter): race condition — filter bar intermittently missing", 15-file frontend fix). Dispatch completed end-to-end: Codex × 2 returned 3 actionable medium-confidence findings; Gemini `/ce:review` ran 10 personas in parallel with zero 429s (first live validation of v5.3.0's Flash + API key Tier 1 + parallel path) and returned 10 findings — but Gemini's output skewed toward acknowledgments of what the PR already fixes rather than residual risk. Codex carried the real-bug load.
+
+### Fixed (MEDIUM — UX / write-check)
+
+- **`snapshot_git` false-positives on fresh downstream repos.** v5.3.1 used `git ls-files --others --exclude-standard` to enumerate untracked files for the post-dispatch write-check. `--exclude-standard` respects the repo's `.gitignore`, but a downstream repo that hasn't added `.arp_*` or `.context/compound-engineering/` to its `.gitignore` trips the check on every dispatch — ARP's own runtime artifacts and ce-review's persona-JSON directory appear as "new writes" and the write-check aborts (or in the camis dispatch, reported `WRITE-CHECK FAILED` for ARP-own files). v5.3.2 post-filters `grep -vE '^\.arp_|^\.context/compound-engineering/'` so those runtime paths are excluded regardless of downstream gitignore state. Real source writes still get caught.
+
+### Fixed (MEDIUM — Gemini prompt engineering)
+
+- **Gemini `/ce:review` output skewed toward "fixed in PR" acknowledgments.** On camis PR #251, Gemini returned 10 findings but the top-confidence entries were `[... fixed in PR]` or `PR correctly addresses X` prose — acknowledgments that the PR accomplishes its declared intent, not residual risk. Low-signal noise displacing capacity. The pipeline already assumes the PR accomplishes its stated intent; it doesn't need Gemini to confirm this. v5.3.2 adds an explicit "find what's STILL BROKEN after this PR lands" directive in the prompt template with four categories of high-value findings (uncovered edge cases, new bugs the fix introduces, partial-fix patterns, residual code-quality debt) and a drop-if-just-acknowledgment instruction. Codex prompts (correctness + adversarial) already frame for residual risk naturally and don't need this tweak.
+
+### Separate fork patch (referenced, not shipped here)
+
+- **ce-review `mode:report-only` artifact-write contract violation.** The ce-review SKILL.md Mode Detection section explicitly says "Strictly read-only. ... do not write `.context/compound-engineering/ce-review/<run-id>/`, do not create todo files, and do not commit, push, or create a PR." But on the camis dispatch, Gemini wrote 11 persona JSON files under `.context/compound-engineering/ce-review/20260415-120000-abcd/` despite `mode:report-only` being in the prompt. Root cause is that Stage 4 Spawning's `run_id` generation + artifact-write path was not gated strongly enough at the orchestrator level — the prose instruction says "skip run-id in report-only" but the model still generated one. Fix lives in `compound-engineering-plugin/plugins/compound-engineering/skills/ce-review/SKILL.md` (a third explicit "Report-only write guard" subsection at the dispatch-integration point where the violation is most likely). Committed separately on the fork, not part of this ARP bump.
+
+### Not changed
+
+- v5.3.0 pins (Flash-only model hardcoded, API key auth-type required, parallel persona dispatch directive, 10-min timeout) all retained.
+- v5.3.1 relaxed precheck (settings.json auth type only, trust gemini-cli for credential loading) retained.
+- Codex correctness + adversarial prompt wording — their framing already pushes for residual-bug finding, no tweak needed. Empirically on camis: 3/3 Codex findings were substantive actionable residuals.
+- Safety rails, kill switch, concurrency locks, redaction — all unchanged.
+
+### Empirical validation (dogfood on camis PR #251)
+
+- Fork-side skill-name allowlist guard from v5.2.0 — **validated under load.** 10 personas spawned, all valid names from the 21-entry allowlist, zero hallucinated names (e.g. no `generalist`, no `reviewer`, no `code-reviewer`). v5.2 validation debt cleared.
+- Parallel persona dispatch on Flash Tier 1 — **validated under load.** Zero 429s across ~10 personas × ~20 turns each over ~5 minutes. RPM ceiling held structurally.
+- EXT_SUMMARY domain hint — **respected.** Gemini picked julik-frontend-races (correct, given PR title) + kieran-typescript (correct, given 9 JS files) and skipped rails / python stack-specific personas. No wasted dispatch.
+
 ## 5.3.1 — 2026-04-15
 
 UX patch on v5.3.0 precheck. Surfaced by user question: "kalau user udah set gemini-cli pake API key auth, kenapa masih perlu set `GEMINI_API_KEY` env var di ARP precheck juga?"

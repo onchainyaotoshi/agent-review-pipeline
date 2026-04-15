@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.3.1
+version: 5.3.2
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Fetches PR conversation context (comments, reviews, unresolved threads) for cross-iteration continuity. Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** v5.3.1 — patch release relaxing the v5.3.0 precheck. v5.3.0's Step 0.3 checked BOTH the `GEMINI_API_KEY` env var AND `~/.gemini/settings.json` auth type; the env var check was over-defensive because gemini-cli auto-loads `.env` files (cwd or `~/.gemini/.env`) as a credential source. A user who configures their key via `.env` would hit a spurious precheck failure even though the actual `gemini -p ...` dispatch would succeed. v5.3.1 drops the env var check and keeps only the auth-type check; the credential itself is gemini-cli's concern and it emits its own actionable error if missing. v5.3.0's core pins (Flash-only model, API key auth type, parallel persona spawn, 10-min timeout) all retained unchanged. See CHANGELOG.
+> **Status:** v5.3.2 — patch release from the first v5.3.x real-consumer dispatch (camis_api_native PR #251, 15-file frontend race-condition fix). Two UX/quality improvements surfaced: (B) `snapshot_git` post-filter for `.arp_*` and `.context/compound-engineering/` paths so the Gemini write-check doesn't false-positive on fresh downstream repos whose `.gitignore` hasn't listed those runtime directories yet; (C) Gemini `/ce:review` prompt now includes an explicit "find what's STILL BROKEN, not what the PR already fixes" directive because the camis dispatch skewed Gemini toward `[... fixed in PR]` acknowledgments instead of residual-risk findings — Codex adversarial carried the real-bug load unassisted. A separate fork-side fix (compound-engineering-plugin) addresses ce-review's mode:report-only artifact-write contract violation. v5.3.0 pins (Flash-only, API key auth type, parallel spawn) retained unchanged. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -395,6 +395,8 @@ Dispatch mode: PARALLEL. This environment has Gemini API key Tier 1 auth with su
 Diff file-extension summary: ${EXT_SUMMARY}
 (Use this for stack-specific persona selection — only dispatch reviewers whose language/framework actually appears in the summary. If no `.rb` files appear, skip `dhh-rails-reviewer` and `kieran-rails-reviewer`; if no `.py`, skip `kieran-python-reviewer`; if no `.ts`/`.tsx`, skip `kieran-typescript-reviewer` and `julik-frontend-races-reviewer`. Stack-specific reviewers are additive — running them on a diff that has no code in their stack is wasted dispatch budget.)
 
+Review emphasis: find what's STILL BROKEN after this PR lands, not what the PR already fixes. The pipeline already assumes the PR accomplishes its declared intent — acknowledgments that confirm this are low-signal noise that displace capacity for genuinely residual risk. High-value findings are: (a) edge cases the fix does not cover, (b) new bugs the fix introduces, (c) partial-fix patterns where the claimed fix is incomplete (the PR says "race closed" but a subtler race path remains open), (d) code-quality or maintainability debt the fix leaves behind. Avoid `[... fixed in PR]` or `PR correctly addresses X` prose in the `issue` field — if all you have is acknowledgment without residual risk, drop the finding rather than report it.
+
 After the compound-engineering review, output ONLY a JSON array summarizing all findings. No markdown fences, no prose.
 Map severity: P0→critical, P1→high, P2→medium, P3→low.
 Schema: [{"file":"...","line":12,"severity":"...","confidence":0.85,"issue":"...","fix_code":"..."}]
@@ -408,12 +410,19 @@ REF="<ref>"
 [[ "$REF" =~ ^[A-Za-z0-9/_.-]+$ ]] || { echo "Invalid ref: $REF"; exit 1; }
 
 # 2. Snapshot git state for post-dispatch write detection.
-#    Excludes gitignored files (legit runtime artifacts like .arp_* cannot false-positive);
-#    still catches modified tracked files and newly-created non-ignored files.
+#    Excludes gitignored files via --exclude-standard + an explicit
+#    post-filter for ARP's own runtime artifacts and ce-review's per-run
+#    persona-JSON directory. v5.3.2: the explicit post-filter is a defense
+#    against fresh downstream repos whose .gitignore doesn't yet list
+#    `.arp_*` or `.context/compound-engineering/` — without it, snapshot_git
+#    false-positives on legitimate runtime state. Still catches modified
+#    tracked files and newly-created non-ignored source files.
 snapshot_git() {
   git rev-parse HEAD 2>/dev/null
   git diff HEAD 2>/dev/null | sha1sum
-  git ls-files --others --exclude-standard 2>/dev/null | sort
+  git ls-files --others --exclude-standard 2>/dev/null \
+    | grep -vE '^\.arp_|^\.context/compound-engineering/' \
+    | sort
 }
 GIT_BEFORE=$(snapshot_git)
 
