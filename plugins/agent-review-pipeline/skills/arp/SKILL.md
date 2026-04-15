@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.2.0-rc4
+version: 5.2.0-rc5
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Fetches PR conversation context (comments, reviews, unresolved threads) for cross-iteration continuity. Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** v5.2.0-rc4 — closes the two HIGH findings Codex surfaced on the rc3 self-review: (a) the GraphQL PR-context query capped `comments`/`reviews`/`reviewThreads` at first-50 with no pagination awareness — a comment-flood attacker could push real maintainer signal off the visible window and ARP would review truncated context as if it were complete; rc4 requests `pageInfo { hasNextPage }` on all four paged connections, exposes a `truncation_warning` boolean in the processed block, and instructs engines to treat conversation context as partial when it's true. (b) `ARP_RUN_ID=$(head -c 8 /dev/urandom | xxd -p)` had no error check — in stripped containers where /dev/urandom is unmounted or xxd missing, the ID silently became empty and the sentinel collapsed to predictable literal markers, reopening the rc2 injection bypass; rc4 wraps the pipe in a scoped `set -o pipefail` subshell, aborts on non-zero exit, and regex-validates the result against `^[0-9a-f]{16}$` before use. Plus a cleanup-glob fix: rc3's `.arp_*_tmp` pattern didn't match the `.arp_pr_context.json.tmp` sidecar (dot vs underscore); rc4 uses `.arp_*.tmp`. See CHANGELOG for the full rc1→rc4 trail.
+> **Status:** v5.2.0-rc5 — mitigates the rc3 Gemini flash-tier orchestrator hallucination (a nonexistent `generalist` skill name, hung for 10 min wall before kill) by (a) pre-computing a file-extension summary from the PR diff and injecting it into the Gemini prompt body so the orchestrator doesn't need to scan the diff twice to decide which stack-specific personas apply, reducing the cognitive load that drove the hallucination; and (b) a complementary fork-side edit to `compound-engineering-plugin/plugins/compound-engineering/skills/ce-review/SKILL.md` adding a flat skill-name allowlist guard as the first subsection of Stage 4 with explicit "if the name is not on the list, STOP — you have hallucinated it" framing. Both changes are additive: weaker orchestrator models get a narrower selection problem and a hallucination safety net; stronger models pay ~0 overhead from the extra prompt lines. rc4's two HIGH fixes (GraphQL pagination awareness + sentinel fail-closed) and the cleanup glob fix remain. See CHANGELOG for the full rc1→rc5 trail.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -340,10 +340,25 @@ Per-model dispatch uses `timeout 1800` (30 min) — accommodates sequential pers
 
 **`<ref>` validation** — before interpolation, validate against `^[A-Za-z0-9/_.-]+$`. Reject with *"Invalid ref: <ref>"* if it contains quotes, newlines, or shell metacharacters. Prevents shell injection through attacker-controlled branch/PR refs.
 
-**Prompt body** — written to `.arp_stage_prompt.md` first (so the shell never sees the prompt as an argv), then read via `$(cat .arp_stage_prompt.md)`:
+**Prompt body** — written to `.arp_stage_prompt.md` first (so the shell never sees the prompt as an argv), then read via `$(cat .arp_stage_prompt.md)`.
+
+**Domain hint (rc5 — reduce orchestrator cognitive load).** Before writing the prompt body, compute a file-extension summary from the PR diff so Gemini's orchestrator doesn't have to scan the diff twice to decide which stack-specific personas apply. Flash-tier orchestrators have been observed hallucinating skill names (`generalist` on the rc3 diff) under the cognitive load of doing full 17-persona selection reasoning against a dense diff from scratch. Pre-computing the extension summary narrows the selection problem to the actually-relevant subset before the model starts reasoning, which complements the fork-side allowlist guard (ce-review SKILL.md's Stage 4 "Skill name allowlist").
+
+```bash
+EXT_SUMMARY=$(git diff --name-only "origin/$PR_BASE...HEAD" 2>/dev/null \
+  | awk 'NF { n=split($0,a,"/"); f=a[n];
+              if (match(f,/\.[^.]+$/)) print tolower(substr(f,RSTART+1)); else print "noext" }' \
+  | sort | uniq -c | sort -rn | awk '{printf "%s(%d) ",$2,$1}')
+EXT_SUMMARY="${EXT_SUMMARY:-unknown}"
+```
+
+**Prompt template** — interpolate `<ref>` and `${EXT_SUMMARY}`:
 
 ```
 /ce:review mode:report-only base:<ref>
+
+Diff file-extension summary: ${EXT_SUMMARY}
+(Use this for stack-specific persona selection — only dispatch reviewers whose language/framework actually appears in the summary. If no `.rb` files appear, skip `dhh-rails-reviewer` and `kieran-rails-reviewer`; if no `.py`, skip `kieran-python-reviewer`; if no `.ts`/`.tsx`, skip `kieran-typescript-reviewer` and `julik-frontend-races-reviewer`. Stack-specific reviewers are additive — running them on a diff that has no code in their stack is wasted dispatch budget.)
 
 After the compound-engineering review, output ONLY a JSON array summarizing all findings. No markdown fences, no prose.
 Map severity: P0→critical, P1→high, P2→medium, P3→low.

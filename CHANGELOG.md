@@ -1,5 +1,31 @@
 # Changelog
 
+## 5.2.0-rc5 — 2026-04-15
+
+rc3 observed a Gemini flash-tier orchestrator hallucination (nonexistent `generalist` skill name; hung for ~10 min wall before manual kill with 2333 bytes of output and no findings JSON). rc4 pushed the planned next dispatch with Pro tier as the fallback, but the user (correctly) asked why we're treating a symptom instead of a root cause. rc5 addresses the root cause in two complementary layers.
+
+### Root cause
+
+ARP invokes `gemini -m "<geminiModel>" -p "$(cat .arp_stage_prompt.md)"`, which runs the **entire** 740-line `/ce:review` pipeline — orchestrator, persona selection reasoning, sequential dispatch, merge, synthesis — on the single model passed to `-m`. ce:review's SKILL.md explicitly says the orchestrator should stay on the most capable model (Stage 4 Model tiering), but on Gemini CLI `activate_skill` loads skill content into the current conversation rather than spawning a subagent with its own model. So when ARP passes a flash-tier model, that model carries all of the orchestrator's cognitive load by itself. On dense diffs (bash + jq + GraphQL), the model compresses the 17-persona selection-and-dispatch reasoning into a fabricated shortcut (`generalist`).
+
+### Fixed (architectural)
+
+- **ARP-side: pre-computed domain hint in Gemini prompt body.** Before dispatch, compute a file-extension summary from the PR diff (`EXT_SUMMARY`) and inject it into the prompt as a `Diff file-extension summary: ...` line with explicit mapping to stack-specific personas ("if no `.rb` → skip `dhh-rails-reviewer` / `kieran-rails-reviewer`", etc.). This pre-narrows the reviewer-selection problem from "choose from 17 personas against a dense diff" to "choose from ~12 personas where the stack-specific 5 are already mostly ruled out." Cognitive load on the orchestrator drops substantially and there's less room to drift into fabricated names.
+- **Fork-side: skill-name allowlist guard in `compound-engineering-plugin` `ce-review` SKILL.md.** New subsection `#### Skill name allowlist (hallucination guard)` as the first subsection of Stage 4, before `#### Model tiering`. Lists all 21 valid skill names in a flat table grouped by layer (Always-on persona 4, Always-on CE 2, Cross-cutting 8, Stack-specific 5, CE conditional 2). Hard-stop framing: "If the name you are about to activate is not on the list, **STOP — you have hallucinated it.**" Explicit call-outs for common fabrication shortcuts (`generalist`, `reviewer`, `code-reviewer`, `architect`) so the model recognizes its own failure mode. Committed in the fork on `fix/gemini-ce-review-dispatch` as `d92a93e`; installed copy at `~/.gemini/skills/ce-review/SKILL.md` synced.
+
+### Why both layers
+
+The ARP-side hint reduces the probability of hallucination by shrinking the selection problem. The fork-side guard catches hallucinations that still occur by forcing a verbatim name check before dispatch. Either alone is a partial fix; together they cover both the "easier to do the right thing" and "harder to do the wrong thing" directions. Neither changes behavior on stronger orchestrators — the hint is a few extra prompt lines, the allowlist is a self-check that costs nothing when the name is correct.
+
+### Not fixed by this rc
+
+- **Pro-tier fallback remains available.** If flash still fails even with both layers in place, the mitigation path (`geminiModel=gemini-3.1-pro-preview`) is unchanged. The correct tier for dense orchestration remains Pro; rc5 reduces how often the user needs to reach for it.
+- **No dynamic pre-dispatch name check.** ARP could in principle sanity-check the parsed Gemini output against the allowlist post-dispatch, but the orchestrator is already inside the ce:review skill — post-hoc detection doesn't recover wasted wall time. The in-orchestrator self-check in the fork is the only place the check can prevent the waste.
+
+### Lesson
+
+The rc3 hallucination was classified as a "dispatch health observation (not a bug — a capability bound)" in rc4. That framing was correct for the immediate model-tier question, but incorrect as a stopping point: a capability bound that can be reduced by re-shaping the problem given to the model is, for practical purposes, a bug in the problem shape. The fix is architectural (prompt structure + orchestrator self-check), not a different model choice. This is the compound-engineering loop's recursive version — not only do self-reviews find bugs in the pipeline, user pushback on the framing of previous findings ("why are we working around the symptom?") compounds further.
+
 ## 5.2.0-rc4 — 2026-04-15
 
 rc3 was reviewed by ARP again (Codex × 2 — the Gemini flash-tier orchestrator hallucinated a nonexistent `generalist` tool on the dense bash + jq + GraphQL diff and hung before producing findings JSON). Codex found 2 HIGH bugs in rc3 plus the cleanup-glob nit that rc3 claimed to fix but didn't.
