@@ -1,0 +1,4 @@
+# ARP runtime artifacts — never commit
+.arp_stage_prompt.md
+.arp_session_log.json
+.arp_session_log.*.json

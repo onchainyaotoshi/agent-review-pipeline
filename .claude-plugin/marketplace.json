@@ -5,13 +5,13 @@
     "url": "https://github.com/onchainyaotoshi"
   },
   "metadata": {
-    "description": "Multi-engine 5-stage autonomous review pipeline with Dual-Engine Consensus. Runs Codex + Gemini concurrently, dedups findings by confidence, auto-fixes until PASS, generates proving tests."
+    "description": "Autonomous code review pipeline with asymmetric dual-engine dispatch. Codex runs correctness + adversarial framings; Gemini runs /ce:review compound-engineering pipeline. Confidence-weighted consensus, bounded auto-fix loop, kill switch on repeat findings, safe defaults."
   },
   "plugins": [
     {
       "name": "agent-review-pipeline",
-      "description": "5-stage autonomous review pipeline (correctness + impact + adversarial + test-gen + deliver) with Dual-Engine Consensus. Runs Codex and Gemini concurrently by default, boosts confidence on cross-engine agreement, drops findings below 0.60, auto-fixes inline until PASS.",
-      "version": "4.1.0",
+      "description": "Autonomous code review pipeline with asymmetric dual-engine dispatch. Codex runs ARP's correctness + adversarial framings (2 dispatches); Gemini runs its own /ce:review compound-engineering pipeline (1 dispatch). 3 parallel perspectives per iteration by default. Fingerprinted findings with +0.15 confidence boost on multi-source agreement, findings below 0.60 dropped. Bounded auto-fix loop (1-10), loop-thrash kill switch, --dry-run flag, safe-off defaults for commit and PR comment.",
+      "version": "5.0.0-rc1",
       "author": {
         "name": "Yaotoshi",
         "url": "https://github.com/onchainyaotoshi"

@@ -1,41 +1,49 @@
 # agent-review-pipeline
 
-Multi-engine 5-stage autonomous code review pipeline for [Claude Code](https://claude.ai/code) with **Dual-Engine Consensus**. Submits your PR to [Codex](https://github.com/openai/codex-plugin-cc) and [Gemini CLI](https://github.com/google-gemini/gemini-cli) concurrently, dedups findings by confidence score, auto-fixes inline, and generates proving tests before commit.
+Autonomous dual-engine code review pipeline for [Claude Code](https://claude.ai/code). **Asymmetric dispatch** — [Codex](https://github.com/openai/codex-plugin-cc) runs ARP's dual-framing (correctness + adversarial); [Gemini CLI](https://github.com/google-gemini/gemini-cli) runs its own `/ce:review` compound-engineering pipeline. Findings merged by confidence, auto-fixed inline, unresolvable ones escalated. Verification delegated to your CI.
 
 ## What It Does
 
-1. **Cross-Engine Consensus** — Both Codex and Gemini review every file in parallel. Same file/line flagged by both engines gets a `+0.15` confidence boost. Findings below `0.60` confidence are dropped. Eliminates single-engine hallucinations.
-2. **5-Stage Pipeline:**
-   * **0. Context Setup** — Scans repo for `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `CONTRIBUTING.md`. Injects rules into both engines.
-   * **1. Correctness Review** — Logic errors, null derefs, type mismatches, missing error handling.
-   * **2. Impact Analysis** — Scans codebase for consumers/callers of changed code. Holistic loop: if fixes are applied, returns to Stage 1 for regression check.
-   * **3. Adversarial Review** — Edge cases, races, security bypasses. Holistic loop back to Stage 1 if fixes applied.
-   * **4. Test Generation** — Writes/updates unit tests proving each fix works.
-   * **5. Deliver & PR Report** — `git commit` + `gh pr comment` with executive summary.
-3. **Autonomous Auto-Fix Loop** — Applies `fix_code` directly via Edit tool, re-runs each stage until PASS or `maxIterations` reached.
+1. **Asymmetric Dual-Engine Review** — 3 parallel dispatches per iteration when `defaultEngine: both`:
+   - **Codex × correctness** (ARP framing: logic errors, null derefs, broken callers)
+   - **Codex × adversarial** (ARP framing: races, injection, edge cases, auth bypass)
+   - **Gemini × /ce:review** (Gemini's compound-engineering multi-persona pipeline with P0-P3 tiering)
 
-## How It Differs from Manual Reviews & Single-Engine Agents
+   **Why asymmetric:** Gemini already has `/ce:review`. Running ARP-side dual-framing on top of it would duplicate work. Codex has no equivalent, so ARP provides the framing discipline for Codex.
 
-| Single-Engine Agent | ARP v4.1 (Consensus) |
-|---------------------|----------------------|
-| One LLM, blind trust | Two LLMs must agree (or score high) before acting |
-| Suggests, leaves fix to human | Auto-fixes inline, re-runs until PASS |
-| One stage, then stops | Chains correctness → impact → adversarial → test-gen automatically |
-| No regression check | Holistic loop: Stage 2/3 fixes rewind to Stage 1 |
-| Just edits files | Generates a unit test proving each fix works |
-| Generic advice | Reads `CLAUDE.md` / `AGENTS.md`, applies your team's standards |
+2. **Confidence-Weighted Consensus** — Findings fingerprinted as `sha1(file:line:issue)`. Multi-source agreement boosts confidence by `+0.15` per extra source (cap 1.0). Findings below `0.60` dropped.
+
+3. **Bounded Auto-Fix Loop** — Applies `fix_code` via Edit tool, re-runs until PASS or `maxIterations` (1-10, default 3). Unlimited intentionally unsupported.
+
+4. **Loop-Thrash Kill Switch** — Fingerprint reappears after its fix was applied → the fix didn't work → escalate to human review instead of looping forever.
+
+5. **Safe Defaults** — `autoCommit` and `postPrComment` default to `false`. `--dry-run` previews findings without editing. Dependency precheck fails fast.
+
+6. **Agreement Telemetry** — Per-run `.arp_session_log.json` records Codex↔Gemini agreement rate for cost/value tuning.
+
+## How It Differs from Single-Engine Agents
+
+| Single-Engine Agent | ARP |
+|---------------------|-----|
+| One LLM, single pass | Codex × 2 framings + Gemini × `/ce:review` — 3 perspectives |
+| Suggests, leaves fix to human | Auto-fixes inline, bounded loop (cap 10) |
+| Loops forever on unfixable bugs | Fingerprint kill switch escalates |
+| Commits without review | Opt-in commit and PR comment |
+| Blind cost | Agreement telemetry + dispatch-level attribution |
 
 ## Prerequisites
 
-- [Claude Code](https://claude.ai/code) CLI
-- [Codex CLI](https://github.com/openai/codex) installed and authenticated + [Codex plugin](https://github.com/openai/codex-plugin-cc):
+- [Claude Code](https://claude.ai/code) CLI.
+- [Codex CLI](https://github.com/openai/codex) installed + authenticated + [Codex plugin](https://github.com/openai/codex-plugin-cc):
   ```
   /plugin marketplace add openai/codex-plugin-cc
   /plugin install codex@openai-codex
   ```
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli) installed and authenticated — verify with `gemini --version`. ARP dispatches Gemini via the `compound-engineering:review:ce-review` subagent, so install [compound-engineering](https://github.com/anthropics/compound-engineering-plugin) too.
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli) installed + authenticated — verify `gemini --version`.
+- **`/ce:review` extension** for Gemini — verify `~/.gemini/commands/ce/review.toml` exists. Provides the compound-engineering review pipeline.
+- `gh` CLI authenticated if reviewing PRs by number.
 
-Install only the engines you need. Use `/arp codex` or `/arp gemini` to force a single engine if the other isn't ready.
+Use `/arp codex` or `/arp gemini` to force a single engine if the other isn't available.
 
 ## Installation
 
@@ -47,7 +55,7 @@ Install only the engines you need. Use `/arp codex` or `/arp gemini` to force a 
 
 ## Usage
 
-Auto-detect target, dual-engine by default:
+Auto-detect target, 3-dispatch review:
 ```
 /arp
 ```
@@ -57,110 +65,106 @@ Review a specific PR:
 /arp 42
 ```
 
-Review specific files or directories:
+Review specific files:
 ```
 /arp src/auth.js src/handlers/
 ```
 
+Preview without editing files:
+```
+/arp --dry-run
+/arp --dry-run 42
+```
+
 ### Engine Selection
 
-ARP defaults to running **both** engines concurrently for consensus validation. Override:
-
 ```
-/arp both                      # Codex + Gemini on every file (default)
-/arp codex                     # Codex only
-/arp gemini                    # Gemini only
-/arp gemini src/components/    # Gemini only, scoped to dir
+/arp both     # Codex dual-framing + Gemini /ce:review (default, 3 dispatches)
+/arp codex    # Codex only (2 dispatches — correctness + adversarial)
+/arp gemini   # Gemini only (1 dispatch — /ce:review)
 ```
 
 ### Flags
 
 | Flag | Alias | Description |
 |------|-------|-------------|
-| `--max-iterations N` | `-n N` | Max auto-fix iterations per stage (default: 3, `0` = unlimited) |
+| `--dry-run` | `-d` | Print findings + proposed fixes, apply nothing |
+| `--max-iterations N` | `-n N` | Max auto-fix iterations. Clamped to 1-10. Default 3. |
 
 ```
-/arp -n 5 42          # up to 5 iterations per stage on PR 42
-/arp -n 0 gemini      # unlimited iterations, Gemini only
+/arp -n 5 42           # up to 5 iterations on PR 42
+/arp --dry-run gemini  # preview Gemini's /ce:review findings only
 ```
 
-Or just ask Claude:
-> "Review PR 42" / "Check this before commit"
+Or just ask Claude: *"Review PR 42"* / *"Check this before commit"*.
 
 ## Configuration (`plugin.json` userConfig)
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `maxIterations` | `3` | Auto-fix retry limit per stage (`0` = unlimited) |
-| `failOnError` | `false` | Abort on first stage that can't PASS instead of escalating |
-| `defaultEngine` | `"both"` | Engine when none specified on CLI: `both`, `codex`, `gemini` |
-| `geminiModel` | `"gemini-3.1-pro-preview"` | Model override for the Gemini subagent |
-| `autoCommit` | `true` | Autonomously `git commit` fixes at Stage 5 |
-| `postPrComment` | `true` | Auto-post executive summary via `gh pr comment` |
+| `maxIterations` | `3` | Auto-fix retry limit. Range 1-10. |
+| `failOnError` | `false` | Abort on stage failure instead of escalating |
+| `defaultEngine` | `"both"` | `both`, `codex`, `gemini` |
+| `geminiModel` | `"gemini-3.1-pro-preview"` | Passed to `gemini -m`. Verify with `gemini models list`. |
+| `autoCommit` | `false` | Auto-commit fixes. **Off by default** — review first. |
+| `postPrComment` | `false` | Auto-post summary via `gh pr comment`. **Off by default**. |
+| `dryRun` | `false` | Run review without Edit / commit / PR comment |
 
 ## Pipeline
 
 ```
-   ┌────────────────────────────────────────┐
-   │ 0. Context Setup                       │
-   │    Scan CLAUDE.md / AGENTS.md / etc.   │
-   │    Resolve PR target via gh pr diff.   │
-   └──────────────────┬─────────────────────┘
+   ┌────────────────────────────────────────────┐
+   │ 0. Context Setup                           │
+   │    Scan CLAUDE.md / AGENTS.md / etc.       │
+   │    Precheck: codex-rescue, gemini CLI,     │
+   │    ~/.gemini/commands/ce/review.toml       │
+   └──────────────────┬─────────────────────────┘
                       │
-   ┌──────────────────▼─────────────────────┐
-   │ 1. Correctness  (Codex + Gemini parallel)│
-   │    Merge + dedup → boost on consensus  │
-   │    Auto-fix → re-run until PASS or max │
-   └──────────────────┬─────────────────────┘
+   ┌──────────────────▼─────────────────────────┐
+   │ 1. Review — 3 parallel dispatches           │
+   │    codex   × correctness framing            │
+   │    codex   × adversarial framing            │
+   │    gemini  × /ce:review                     │
+   │    Merge + fingerprint + confidence         │
+   │    Kill switch on repeat fingerprint        │
+   │    Auto-fix → loop until PASS or max        │
+   └──────────────────┬─────────────────────────┘
                       │ PASS
-   ┌──────────────────▼─────────────────────┐
-   │ 2. Impact Analysis                     │
-   │    Auto-fix → if edited: DIRTY → →1    │
-   └──────────────────┬─────────────────────┘
-                      │ SAFE
-   ┌──────────────────▼─────────────────────┐
-   │ 3. Adversarial Review                  │
-   │    Auto-fix → if edited: DIRTY → →1    │
-   └──────────────────┬─────────────────────┘
-                      │ PASS
-   ┌──────────────────▼─────────────────────┐
-   │ 4. Test Generation                     │
-   │    Write/update unit tests for fixes   │
-   └──────────────────┬─────────────────────┘
-                      │
-   ┌──────────────────▼─────────────────────┐
-   │ 5. Deliver — git commit + gh pr comment│
-   └────────────────────────────────────────┘
+   ┌──────────────────▼─────────────────────────┐
+   │ 2. Deliver                                  │
+   │    Print summary + agreement rate           │
+   │    (Opt-in) git commit                      │
+   │    (Opt-in) gh pr comment                   │
+   └────────────────────────────────────────────┘
 ```
 
 ## Example Output
 
 ```
-Agent Review Pipeline: PASS  (Dual-Engine Consensus)
+Agent Review Pipeline: PASS  (asymmetric 3-dispatch)
 
-Stage 1 — Correctness:
-- Codex  (1/3 iter): 2 findings, confidence 0.78 / 0.82
-- Gemini (1/3 iter): 1 finding, confidence 0.71
-- Consensus: 1 same-line agreement → boosted to 0.93
-- Fixes applied: 3
+Review (iter 2/3):
+  Dispatches: codex:correctness, codex:adversarial, gemini:ce-review
+  Findings by severity: critical=1, high=2, medium=1
+  By source: codex:correctness=2, codex:adversarial=1, gemini:ce-review=2
+  Agreement rate: 0.67 (codex_only=1, gemini_only=1, both=2)
+  Fixes applied: 4
+  Escalated: 0
+  Parse errors: 0
 
-Stage 2 — Impact Analysis:
-- 7 dependents checked → 1 breaking signature → fixed
-- DIRTY → re-run Stage 1: PASS
-
-Stage 3 — Adversarial:
-- Codex: race in renderComplete → debounce added
-- Gemini: PASS
-
-Stage 4 — Test Generation:
-- 3 unit tests added, all pass
-
-Stage 5 — Deliver:
-- chore(arp): autonomous review fixes
-- PR comment posted
+Deliver:
+  Summary printed to stdout.
+  autoCommit=false → no commit
+  postPrComment=false → no PR comment
 ```
 
-`N/max iter` — N = how many cycles ran, max = configured limit. `3/3 ESCALATED` means the engine hit the limit with remaining issues.
+`N/max iter` — N = cycles run, max = configured limit. `ESCALATED` = kill switch triggered.
+
+## Tuning
+
+- **Agreement rate < 0.3** → engines genuinely disagree, dual-engine earning cost.
+- **Agreement rate > 0.9** → engines agree often. Consider `defaultEngine: gemini` (cheaper, 1 dispatch) + raise threshold to 0.75.
+- **Codex adversarial contribution < 10% of unique findings** → drop to single Codex framing, halve Codex cost.
 
 ## License
 

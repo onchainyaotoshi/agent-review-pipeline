@@ -1,7 +1,7 @@
 {
   "name": "agent-review-pipeline",
-  "version": "4.1.0",
-  "description": "Multi-engine 5-stage autonomous review pipeline with Dual-Engine Consensus. Auto-routes backend→Codex, frontend→Gemini.",
+  "version": "5.0.0-rc1",
+  "description": "Autonomous dual-engine code review pipeline. Runs Codex + Gemini concurrently with parallel correctness and adversarial framings. Dedups by confidence, auto-fixes inline, escalates unresolvable findings.",
   "author": {
     "name": "Yaotoshi",
     "url": "https://github.com/onchainyaotoshi"
@@ -12,37 +12,43 @@
       "title": "Max Iterations",
       "type": "number",
       "default": 3,
-      "description": "Max auto-fix retry loops per stage before escalating (0 = unlimited)"
+      "description": "Max auto-fix retry loops before escalating. Range: 1-10. Unlimited is intentionally not supported (cost safety)."
     },
     "failOnError": {
       "title": "Fail On Error",
       "type": "boolean",
       "default": false,
-      "description": "If true, abort pipeline on first stage that can't PASS within maxIterations instead of escalating"
+      "description": "If true, abort pipeline when a stage can't PASS within maxIterations instead of escalating."
     },
     "defaultEngine": {
       "title": "Default Engine",
       "type": "string",
       "default": "both",
-      "description": "Engine selection when none specified on CLI. Values: both, gemini, codex"
+      "description": "Engine selection when none specified on CLI. Values: both, gemini, codex."
     },
     "geminiModel": {
       "title": "Gemini Model",
       "type": "string",
       "default": "gemini-3.1-pro-preview",
-      "description": "Model override for the Gemini subagent. Defaults to gemini-3.1-pro-preview."
+      "description": "Model passed to gemini CLI via -m flag. Verify supported models with 'gemini models list'."
     },
     "autoCommit": {
       "title": "Auto Commit Fixes",
       "type": "boolean",
-      "default": true,
-      "description": "If true, autonomously commit fixes at the end of the pipeline (Stage 5)."
+      "default": false,
+      "description": "If true, autonomously commit fixes at the end of the pipeline. Default false for safety — user should review before committing."
     },
     "postPrComment": {
       "title": "Post PR Comment",
       "type": "boolean",
-      "default": true,
-      "description": "If true, automatically post the executive summary to the GitHub PR using 'gh pr comment'."
+      "default": false,
+      "description": "If true, auto-post executive summary to the GitHub PR via 'gh pr comment'. Default false — review output locally first before making public."
+    },
+    "dryRun": {
+      "title": "Dry Run",
+      "type": "boolean",
+      "default": false,
+      "description": "If true, run review stages and print findings + proposed fixes without applying any Edit, commit, or PR comment."
     }
   }
 }
