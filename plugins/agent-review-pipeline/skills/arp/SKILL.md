@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc7
+version: 5.0.0-rc8
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
-argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number | files]"
+argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** Release candidate (rc7). rc2 addressed 3 security issues from PR #1's first e2e run; rc3-rc6 closed write-check refinement, parse-error diagnostics, integration-harness spec, PR-comment redaction, and Codex enforced-read-only; rc7 extends the rc5 scrubber to parse-error artifacts (write-time) and rotated session logs (rotation-time), closing the on-disk scrub blocker. See CHANGELOG.
+> **Status:** Release candidate (rc8). rc2 addressed 3 security issues from PR #1's first e2e run; rc3-rc7 closed write-check refinement, parse-error diagnostics, integration-harness spec, PR-comment redaction, Codex enforced-read-only, and on-disk scrub; rc8 simplifies the argument surface — PR is now the sole review target, file-path mode dropped. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -111,7 +111,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 ## How to Run
 
 ### Step 0: Context & Setup
-1. **Flag parsing:** recognize `--dry-run` (or `-d`), `-n N` / `--max-iterations N` (clamp to 1-10), `codex|gemini|both`, PR number, file paths.
+1. **Flag parsing:** recognize `--dry-run` (or `-d`), `-n N` / `--max-iterations N` (clamp to 1-10), `codex|gemini|both`, PR number. If no PR number is passed, auto-detect the open PR for the current branch via `gh pr view --json number -q .number`; if none exists, abort with *"No PR found for current branch — push and open a PR first, or pass a PR number explicitly"*. Local file-path review is no longer supported (removed in rc8 — PR is the sole review target).
 2. **Engine resolution (precedence order, first match wins):**
    - CLI token `codex`, `gemini`, or `both` passed to `/arp`
    - `defaultEngine` from `plugin.json` userConfig
@@ -122,10 +122,10 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
      - Run `gemini --version`; error: *"Install gemini CLI and authenticate"*.
      - Run `gemini models list` and confirm `<geminiModel>` is listed; error: *"Model `<geminiModel>` not available. Run `gemini models list`."*.
      - Verify `~/.gemini/commands/ce/review.toml` exists; error: *"Install ce:review extension for Gemini"*.
-   - If a PR number was passed: run `gh auth status`; error: *"Run `gh auth login` before reviewing PRs by number"*.
+   - Always run `gh auth status` (PR is the sole review target); error: *"Run `gh auth login` — ARP needs authenticated `gh` to resolve the PR diff"*.
 4. **Concurrency guard:** acquire an advisory file lock via `exec 9>.arp.lock && flock -n 9` at pipeline start. If the lock cannot be acquired, abort with *"Another ARP run is in progress. Wait for it to finish or remove `.arp.lock` after confirming no other process."*. The lock is released automatically when the shell exits, or explicitly via `flock -u 9` at the end of Step 2. This is a real kernel-level lock — no TOCTOU window.
 5. Scan repo root for `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `CONTRIBUTING.md`. Inject contents into the `<repository_rules>` block of every engine prompt.
-6. Resolve PR targets via `gh pr diff <n>` (or use provided file paths).
+6. Resolve PR diff via `gh pr diff <n>` (where `<n>` was passed or auto-detected in step 1).
 7. Initialize `.arp_session_log.json` with empty findings.
 
 ### Step 1: Review (Asymmetric Dual-Engine)
@@ -197,7 +197,7 @@ GIT_AFTER=$(snapshot_git)
 
 > Read-only enforced through **three layers**: (1) `mode:report-only` prompt flag, (2) `--include-directories` scoped to `~/.gemini/commands/ce` (not the whole `~/.gemini` tree — prevents credential exposure via `settings.json` MCP env/headers), (3) post-dispatch snapshot diff (tracked-file changes + new non-ignored files) that aborts on any modification. Gitignored paths (e.g. `.arp_*` runtime artifacts, any future `.gemini/` workspace cache) are deliberately excluded so legitimate runtime state cannot false-positive the check. `--approval-mode yolo` is necessary because `plan` blocks shell access which `/ce:review` needs for git/grep.
 
-`<ref>` is the PR number or branch/ref passed to `/arp`. If reviewing local file paths, pass `HEAD` and include the list of paths in the prompt body.
+`<ref>` is the PR number passed to `/arp` or auto-detected from the current branch.
 
 **Parallel execution:** dispatch all active subagents concurrently. Collect outputs.
 

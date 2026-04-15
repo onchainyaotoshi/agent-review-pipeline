@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.0.0-rc8 — 2026-04-15
+
+User-feedback simplification of the argument surface.
+
+### Breaking
+
+- **File-path review removed.** `/arp src/foo.ts src/bar/` is no longer accepted. PR is now the sole review target. Rationale: the user's actual workflow is PR-only — file-path mode added flag-parsing and target-resolution branching for a path nobody used. Removing simplifies SKILL.md, plugin.json arg hint, and both READMEs.
+- **`/arp` (no args) now auto-detects the open PR for the current branch** via `gh pr view --json number -q .number`. If no PR exists, abort with *"No PR found for current branch — push and open a PR first, or pass a PR number explicitly"*. Behavior previously implied "review current diff" which conflated with file-path mode.
+- **`gh auth status` is now always run in pre-flight**, not gated on "if a PR number was passed". Since PR is the only target, `gh` auth is mandatory.
+
+### Result
+
+`argument-hint` shrank from `[--dry-run] [-n N] [codex|gemini|both] [PR number | files]` to `[--dry-run] [-n N] [codex|gemini|both] [PR number]`. Step 0.1 flag-parsing simpler. Step 0.6 PR-resolution no longer branches. README usage examples cleaner.
+
 ## 5.0.0-rc7 — 2026-04-15
 
 Closes the on-disk artifact-scrub blocker introduced as a narrower follow-up in rc5. Reuses the rc5 scrubber pattern set at two new write points.

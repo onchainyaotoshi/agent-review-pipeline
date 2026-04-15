@@ -55,7 +55,7 @@ Use `/arp codex` or `/arp gemini` to force a single engine if the other isn't av
 
 ## Usage
 
-Auto-detect target, 3-dispatch review:
+Auto-detect open PR for current branch, 3-dispatch review:
 ```
 /arp
 ```
@@ -65,16 +65,13 @@ Review a specific PR:
 /arp 42
 ```
 
-Review specific files:
-```
-/arp src/auth.js src/handlers/
-```
-
 Preview without editing files:
 ```
 /arp --dry-run
 /arp --dry-run 42
 ```
+
+> PR is the sole review target. ARP requires `gh` CLI authenticated. If the current branch has no open PR, push and open one first or pass `<PR number>` explicitly.
 
 ### Engine Selection
 
