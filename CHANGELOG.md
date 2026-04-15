@@ -1,5 +1,39 @@
 # Changelog
 
+## 5.0.0-rc12 — 2026-04-15
+
+Switches default `geminiModel` from `gemini-3.1-pro-preview` to `gemini-2.5-pro` based on a real e2e debug session: `gemini-3.1-pro-preview` headless deployment cannot serve `/ce:review` parallel persona spawns under current load.
+
+### Background
+
+After rc11 landed, the rc11 e2e dispatch returned `RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview on the server`. Note the wording — "No capacity on the server", not "exhausted your capacity". That's a server-side capacity error, distinct from per-user quota exhaustion (which the screenshot-confirmed Pro bucket showed at only 2% used).
+
+Empirical debugging proved the failure mode:
+
+- `gemini -m gemini-3.1-pro-preview -p "hi"` → works (1 server slot needed, succeeds via 429 retry-backoff)
+- `gemini -m gemini-3.1-pro-preview --approval-mode yolo --include-directories ~/.gemini/commands/ce -p "say one word"` → works (same flags, simple prompt)
+- Same flags + ce:review activation prompt → fails with "No capacity on the server"
+
+Conclusion: `/ce:review` spawns 6+ persona sub-agents in parallel. Each persona is an independent API call. `gemini-3.1-pro-preview` is a preview-build deployment with smaller server-capacity pool. When 6+ concurrent calls hit it during ambient load, the pool can't satisfy them and 429s the whole batch.
+
+### Changed
+
+- **`geminiModel` default**: `gemini-3.1-pro-preview` → `gemini-2.5-pro` in `plugin.json` and SKILL.md.
+- **README + SKILL.md** add an explicit "Why default is gemini-2.5-pro" block citing the empirical evidence and the persona-spawn server-cap multiplier.
+- **Override path documented**: operators with reliable preview-deployment access can override the userConfig back to `gemini-3.1-pro-preview`. Quality-vs-reliability tradeoff is explicit.
+
+### Lesson
+
+Single-call ping success ≠ multi-call dispatch reliability. When validating a model for parallel-spawn workloads, the ping must reflect the actual concurrent-call shape. ARP's `/arp --dry-run 1` works as the real probe.
+
+### Still known-open
+
+- Deterministic fingerprint across Claude sessions
+- LLM-side cost pre-estimate
+- In-memory dispatch buffer scrubbing
+- Integration test harness implementation (spec at `docs/specs/integration-test-harness.md`)
+- `gemini-3.1-pro-preview` headless deployment server-capacity (external — Google's infrastructure)
+
 ## 5.0.0-rc11 — 2026-04-15
 
 Reverts rc10's broken model-name change while keeping its correct cascade simplification.

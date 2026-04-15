@@ -1,6 +1,6 @@
 {
   "name": "agent-review-pipeline",
-  "version": "5.0.0-rc11",
+  "version": "5.0.0-rc12",
   "description": "Autonomous code review pipeline with asymmetric dual-engine dispatch. Codex runs ARP's correctness + adversarial framings (2 dispatches); Gemini runs its own /ce:review compound-engineering pipeline (1 dispatch). Confidence-weighted consensus, bounded auto-fix loop, loop-thrash kill switch, safe-off defaults.",
   "author": {
     "name": "Yaotoshi",
@@ -29,7 +29,7 @@
     "geminiModel": {
       "title": "Gemini Model",
       "type": "string",
-      "default": "gemini-3.1-pro-preview",
+      "default": "gemini-2.5-pro",
       "description": "Model passed to gemini CLI via -m flag. Verify supported models with 'gemini models list'."
     },
     "autoCommit": {

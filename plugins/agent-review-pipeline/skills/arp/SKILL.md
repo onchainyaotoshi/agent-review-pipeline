@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc11
+version: 5.0.0-rc12
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** Release candidate (rc11). rc2 addressed 3 security issues from PR #1's first e2e run; rc3-rc9 closed many incremental issues; rc10 attempted a model rename based on the Gemini CLI's interactive UI but landed with broken headless IDs (`gemini-3.1-pro` and `gemini-3-flash` return 404 in `-p` mode); rc11 reverts the model names back to the canonical headless IDs (`gemini-3.1-pro-preview`, `gemini-2.5-flash`) while keeping rc10's correct cascade simplification (drop the redundant Pro-bucket `gemini-2.5-pro` hop). Adds a clear note that Auto-mode UI labels and headless `-m` IDs are different namespaces. See CHANGELOG.
+> **Status:** Release candidate (rc12). rc11 set the canonical headless model to `gemini-3.1-pro-preview`. rc12 changes the default to `gemini-2.5-pro` after empirical debugging revealed the preview deployment's server capacity saturates when ce:review spawns 6+ personas in parallel — single-call probes succeed but full ce:review activation fails with "No capacity on the server". 2.5-pro has a separate, larger headless server-cap pool. Operators with reliable preview-deployment access can override `geminiModel` userConfig back to `gemini-3.1-pro-preview`. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -178,11 +178,11 @@ Prompt: shared read-only contract + "You are a red-team attacker trying to break
 
 **Dispatch 3 — Gemini × /ce:review** (Bash tool):
 
-**Model cascade** — try `<geminiModel>` (default `gemini-3.1-pro-preview`), on `429`/quota error fall back to **`gemini-2.5-flash`**. **Flash fallback is gated and discouraged**: only allowed when env `ALLOW_FLASH_FALLBACK=1` is set, otherwise abort dispatch with *"Gemini Pro bucket exhausted; set ALLOW_FLASH_FALLBACK=1 to attempt gemini-2.5-flash (empirically unreliable for /ce:review — 2026-04-15 probes showed 10-min silent hang or polite quota-exhausted exit with 0 findings) or retry later"*. This prevents silent quality downgrade when an attacker or ambient usage exhausts the Pro quota.
+**Model cascade** — try `<geminiModel>` (default `gemini-2.5-pro`), on `429`/quota error fall back to **`gemini-2.5-flash`**. **Flash fallback is gated and discouraged**: only allowed when env `ALLOW_FLASH_FALLBACK=1` is set, otherwise abort dispatch with *"Gemini Pro bucket exhausted; set ALLOW_FLASH_FALLBACK=1 to attempt gemini-2.5-flash (empirically unreliable for /ce:review — 2026-04-15 probes showed 10-min silent hang or polite quota-exhausted exit with 0 findings) or retry later"*. This prevents silent quality downgrade when ambient usage exhausts the Pro quota.
 
-**Headless model-ID note (important):** the canonical Gemini-3 Pro model ID for `gemini -p ... -m <id>` is `gemini-3.1-pro-preview` — the `-preview` suffix stays on the headless API ID even though the interactive model-selector shows it as just `gemini-3.1-pro`. The unsuffixed name is a display label for the Auto-mode UI, not a valid `-m` argument (returns 404 ModelNotFound). Verify with `gemini models list`. Same for `gemini-3-flash`, which is display-only — flash fallback uses `gemini-2.5-flash` (verified valid headless ID).
+**Why default is `gemini-2.5-pro` and not `gemini-3.1-pro-preview` (rc12 discovery):** `/ce:review` spawns 6+ persona sub-agents in parallel inside Gemini, and each persona is a separate API call. The headless `gemini-3.1-pro-preview` deployment has independent server capacity (preview build, smaller pool) which saturates immediately when N personas spawn concurrently — single-call `gemini -p "hi"` returns OK, but the same flags with a ce:review activation prompt fail with `RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview on the server`. `gemini-2.5-pro` has a separate, larger server-cap pool that absorbs the parallel spawn reliably. Quality is slightly lower than Gemini-3 Pro but the dispatch actually completes. Operators with consistent access to a less-saturated Gemini-3 Pro deployment may override `geminiModel` userConfig to `gemini-3.1-pro-preview`.
 
-**Why no `gemini-2.5-pro` hop:** the Pro and Flash buckets are separate quotas, but `gemini-2.5-pro` shares the `Pro` bucket with `gemini-3.1-pro-preview` — falling back to it gains nothing when Pro is exhausted. Skip straight from Pro to gated Flash.
+**Headless model-ID note:** the canonical Gemini-3 Pro model ID for `gemini -p ... -m <id>` is `gemini-3.1-pro-preview` — the `-preview` suffix stays on the headless API ID even though the interactive model-selector shows it as just `gemini-3.1-pro`. The unsuffixed name is a display label for the Auto-mode UI, not a valid `-m` argument (returns 404 ModelNotFound). Verify with `gemini models list`. Same for `gemini-3-flash`, which is display-only — flash fallback uses `gemini-2.5-flash` (verified valid headless ID).
 
 Per-model dispatch uses `timeout 600` (10 min) — on timeout SIGTERM the subprocess and move to the next cascade step.
 
