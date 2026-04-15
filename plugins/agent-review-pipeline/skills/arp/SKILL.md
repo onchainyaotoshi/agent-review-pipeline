@@ -131,13 +131,17 @@ Prompt includes: "READ-ONLY review. Do not edit any file — output findings onl
 
 **Dispatch 3 — Gemini × /ce:review** (Bash tool):
 
+Model cascade: try `<geminiModel>` (default `gemini-3.1-pro-preview`), on quota error fall back to `gemini-2.5-pro`, then `gemini-2.5-flash`. Use the first model that responds without a 429/quota error.
+
 ```bash
-gemini -m "<geminiModel>" -p "/ce:review <pr-or-diff-ref>
+gemini -m "<geminiModel>" --approval-mode yolo --include-directories ~/.gemini -p "/ce:review mode:report-only base:<ref>
 
 After the compound-engineering review, output ONLY a JSON array summarizing all findings. No markdown fences, no prose.
 Map severity: P0→critical, P1→high, P2→medium, P3→low.
-Schema: [{\"file\":\"...\",\"line\":12,\"severity\":\"...\",\"confidence\":0.85,\"issue\":\"...\",\"fix_code\":\"...\"}]" --approval-mode plan -o text
+Schema: [{\"file\":\"...\",\"line\":12,\"severity\":\"...\",\"confidence\":0.85,\"issue\":\"...\",\"fix_code\":\"...\"}]" -o text
 ```
+
+> `--approval-mode yolo` is required — `plan` mode blocks shell access and prevents ce:review from running git/grep. Report-only mode (`mode:report-only`) ensures Gemini never edits files even with yolo approval. `--include-directories ~/.gemini` allows Gemini to read skill files outside the project workspace.
 
 `<pr-or-diff-ref>` is the PR number or branch/ref passed to `/arp`. If reviewing local file paths, pass `HEAD` and include the list of paths in the prompt body.
 
