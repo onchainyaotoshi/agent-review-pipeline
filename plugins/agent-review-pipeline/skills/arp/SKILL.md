@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc10
+version: 5.0.0-rc11
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** Release candidate (rc10). rc2 addressed 3 security issues from PR #1's first e2e run; rc3-rc9 closed write-check refinement, parse-error diagnostics, integration-harness spec, PR-comment redaction, Codex enforced-read-only, on-disk scrub, argument simplification, and working-tree freshness check; rc10 corrects model naming (`gemini-3.1-pro-preview` → `gemini-3.1-pro` canonical) and simplifies the cascade — drops the redundant `gemini-2.5-pro` hop (same Pro quota bucket) and switches Flash fallback to `gemini-3-flash` (same Gemini-3 family). See CHANGELOG.
+> **Status:** Release candidate (rc11). rc2 addressed 3 security issues from PR #1's first e2e run; rc3-rc9 closed many incremental issues; rc10 attempted a model rename based on the Gemini CLI's interactive UI but landed with broken headless IDs (`gemini-3.1-pro` and `gemini-3-flash` return 404 in `-p` mode); rc11 reverts the model names back to the canonical headless IDs (`gemini-3.1-pro-preview`, `gemini-2.5-flash`) while keeping rc10's correct cascade simplification (drop the redundant Pro-bucket `gemini-2.5-pro` hop). Adds a clear note that Auto-mode UI labels and headless `-m` IDs are different namespaces. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -178,9 +178,11 @@ Prompt: shared read-only contract + "You are a red-team attacker trying to break
 
 **Dispatch 3 — Gemini × /ce:review** (Bash tool):
 
-**Model cascade** — try `<geminiModel>` (default `gemini-3.1-pro`), on `429`/quota error fall back to **`gemini-3-flash`** (within the same Gemini-3 family). **Flash fallback is gated and discouraged**: only allowed when env `ALLOW_FLASH_FALLBACK=1` is set, otherwise abort dispatch with *"Gemini Pro bucket exhausted; set ALLOW_FLASH_FALLBACK=1 to attempt gemini-3-flash (empirically unreliable for /ce:review — 2026-04-15 probes showed 10-min silent hang or polite quota-exhausted exit with 0 findings) or retry later"*. This prevents silent quality downgrade when an attacker or ambient usage exhausts the Pro quota.
+**Model cascade** — try `<geminiModel>` (default `gemini-3.1-pro-preview`), on `429`/quota error fall back to **`gemini-2.5-flash`**. **Flash fallback is gated and discouraged**: only allowed when env `ALLOW_FLASH_FALLBACK=1` is set, otherwise abort dispatch with *"Gemini Pro bucket exhausted; set ALLOW_FLASH_FALLBACK=1 to attempt gemini-2.5-flash (empirically unreliable for /ce:review — 2026-04-15 probes showed 10-min silent hang or polite quota-exhausted exit with 0 findings) or retry later"*. This prevents silent quality downgrade when an attacker or ambient usage exhausts the Pro quota.
 
-**Why no `gemini-2.5-pro` hop:** the Pro and Flash buckets are separate quotas, but `gemini-2.5-pro` shares the `Pro` bucket with `gemini-3.1-pro` — falling back to it gains nothing when Pro is exhausted. Stay in the Gemini-3 family for the flash fallback so model behavior stays consistent.
+**Headless model-ID note (important):** the canonical Gemini-3 Pro model ID for `gemini -p ... -m <id>` is `gemini-3.1-pro-preview` — the `-preview` suffix stays on the headless API ID even though the interactive model-selector shows it as just `gemini-3.1-pro`. The unsuffixed name is a display label for the Auto-mode UI, not a valid `-m` argument (returns 404 ModelNotFound). Verify with `gemini models list`. Same for `gemini-3-flash`, which is display-only — flash fallback uses `gemini-2.5-flash` (verified valid headless ID).
+
+**Why no `gemini-2.5-pro` hop:** the Pro and Flash buckets are separate quotas, but `gemini-2.5-pro` shares the `Pro` bucket with `gemini-3.1-pro-preview` — falling back to it gains nothing when Pro is exhausted. Skip straight from Pro to gated Flash.
 
 Per-model dispatch uses `timeout 600` (10 min) — on timeout SIGTERM the subprocess and move to the next cascade step.
 
@@ -296,7 +298,7 @@ GIT_AFTER=$(snapshot_git)
 - Gemini read-only enforced via **three-layer defence**: `mode:report-only` prompt flag, `--include-directories` scoped to `~/.gemini/commands/ce` only (not `~/.gemini`), and post-dispatch snapshot diff (tracked-file changes + new non-ignored files) that aborts on any modification. Gitignored runtime artifacts are deliberately excluded so legitimate state cannot false-positive the check. `--approval-mode yolo` is needed because `plan` blocks the shell access `/ce:review` requires.
 - Same scrubber pattern set (API keys, JWT-shaped tokens, PEM private-key blocks, inline credential assignments, bearer tokens) is applied at three points: (1) PR comment body before `gh pr comment` (Step 2.5), (2) parse-error artifact files at write-time (JSON Robustness step 2), (3) session log on rotation (Step 2.6). Fail-closed at every point — scrubber error aborts the action rather than writing/posting raw.
 - `<ref>` validated against `^[A-Za-z0-9/_.-]+$` before interpolation — blocks shell/prompt injection through attacker-controlled branch or PR refs.
-- Model cascade fallback to `gemini-3-flash` (Flash bucket, separate quota from Pro) requires explicit `ALLOW_FLASH_FALLBACK=1` env — prevents silent review-quality downgrade when Pro bucket is exhausted. The redundant `gemini-2.5-pro` hop was dropped in rc10 because it shares the Pro quota bucket.
+- Model cascade fallback to `gemini-2.5-flash` (Flash bucket, separate quota from Pro) requires explicit `ALLOW_FLASH_FALLBACK=1` env — prevents silent review-quality downgrade when Pro bucket is exhausted. The redundant `gemini-2.5-pro` hop was dropped in rc10 because it shares the Pro quota bucket. `gemini-3-flash` is not a valid headless `-m` argument (display-label only); use `gemini-2.5-flash` for headless flash fallback.
 - Per-model Gemini dispatch has a 10-minute `timeout 600` watchdog. On timeout, SIGTERM and move to next cascade step.
 - Concurrency guard uses real `flock -n` advisory lock on `.arp.lock`, not an mtime sniff — no TOCTOU window.
 - Pre-flight working-tree freshness check (Step 0.5) aborts when `git diff --quiet HEAD` or `git diff --cached --quiet` is non-clean. Prevents the "second /arp run reviews stale PR-HEAD diff while the local tree already has a previous run's fixes" failure mode — wasted dispatch quota plus mid-loop "old_string not found" Edit corruption. Skipped under `--dry-run` because peek mode applies no edits.

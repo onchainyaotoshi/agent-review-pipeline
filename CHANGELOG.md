@@ -1,5 +1,30 @@
 # Changelog
 
+## 5.0.0-rc11 — 2026-04-15
+
+Reverts rc10's broken model-name change while keeping its correct cascade simplification.
+
+### Background
+
+rc10 renamed `gemini-3.1-pro-preview` → `gemini-3.1-pro` and `gemini-2.5-flash` → `gemini-3-flash` based on names visible in the Gemini CLI's interactive model-selector UI. **The names visible in that UI are display labels for Auto mode, not valid headless API model IDs.** Verified empirically right after the rc10 dispatch:
+
+- `gemini -p ... -m gemini-3.1-pro` → `404 ModelNotFoundError: Requested entity was not found.`
+- `gemini -p ... -m gemini-3-flash` → same 404
+- `gemini -p ... -m gemini-3.1-pro-preview` → 429 backoff path (still valid, just rate-limited)
+
+So the `-preview` suffix is part of the canonical headless model ID, even though the interactive Auto-mode UI renders it without.
+
+### Changed
+
+- **`geminiModel` default**: reverted `gemini-3.1-pro` → `gemini-3.1-pro-preview` in `plugin.json` and SKILL.md.
+- **Flash fallback model**: reverted `gemini-3-flash` → `gemini-2.5-flash` (the only valid headless Flash ID currently — Gemini-3 Flash is display-only).
+- **Cascade**: stays as rc10's simplified `gemini-3.1-pro-preview → (gated) gemini-2.5-flash` two-hop. rc10's reasoning for dropping the redundant `gemini-2.5-pro` hop (same Pro quota bucket) was correct and is preserved.
+- **README + SKILL.md added a "Headless model-ID note"**: explicitly documents that Auto-mode UI labels and headless `-m` IDs are different namespaces. Verify with `gemini models list` before changing.
+
+### Lesson
+
+UI-visible model names ≠ headless API model IDs. Always probe with `gemini -p ... -m <id> -p "ping"` before pinning a new name, even when the UI shows it as canonical.
+
 ## 5.0.0-rc10 — 2026-04-15
 
 Model naming + cascade simplification driven by user inspection of Gemini CLI's quota dashboard.
