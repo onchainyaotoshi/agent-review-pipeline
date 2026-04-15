@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc13
+version: 5.0.0-rc14
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** Release candidate (rc13) — **first end-to-end Gemini-side validation passing**. rc11 set canonical headless model. rc12 switched to `gemini-2.5-pro` to dodge Pro server-cap. rc13 closes out the e2e gate by combining: (1) fork-side sequential persona spawn in ce-review (compound-engineering-plugin commit `adc218e`), (2) ARP-side default switch to `gemini-3-flash-preview` (Flash bucket with headroom). 2026-04-15 e2e produced 5 valid findings JSON in 4395 bytes / <10 min. Per memory feedback gate: PASSES — Gemini side empirically delivers findings JSON via ARP. See CHANGELOG.
+> **Status:** Release candidate (rc14) — first end-to-end Gemini-side validation passing in rc13; rc14 applies 2 actionable findings from that very run (geminiModel description sync, normalize() newline handling) and triages 3 others (1 hallucinated, 1 risky, 1 already self-acknowledged). The rc14 dispatch loop literally consumed its own output. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -79,7 +79,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 }
 ```
 
-- `fingerprint` = `sha1(file + ":" + line + ":" + severity + ":" + normalize(issue) + ":" + sha1(fix_code[:200]))`. `normalize` = lowercase + collapse whitespace + strip non-alphanumeric punctuation + trim. Severity and fix_code-hash prevent same-line distinct-bug collisions. Compute via bash helper: `normalize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[[:space:]]\+/ /g; s/[^a-z0-9 ]//g' | sed 's/^ //; s/ $//'; }` then `printf '%s:%s:%s:%s:%s' "$file" "$line" "$severity" "$(normalize "$issue")" "$(printf '%.200s' "$fix_code" | sha1sum | cut -c1-40)" | sha1sum | cut -c1-40`.
+- `fingerprint` = `sha1(file + ":" + line + ":" + severity + ":" + normalize(issue) + ":" + sha1(fix_code[:200]))`. `normalize` = lowercase + collapse whitespace + strip non-alphanumeric punctuation + trim. Severity and fix_code-hash prevent same-line distinct-bug collisions. Compute via bash helper: `normalize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[^a-z0-9 ]//g' | sed 's/^ //; s/ $//'; }` then `printf '%s:%s:%s:%s:%s' "$file" "$line" "$severity" "$(normalize "$issue")" "$(printf '%.200s' "$fix_code" | sha1sum | cut -c1-40)" | sha1sum | cut -c1-40`.
 - `agreement.rate` = `both / (codex_only + gemini_only + both)`.
 - `source` lists exact dispatch origin (`codex:correctness`, `codex:adversarial`, `gemini:ce-review`) for debugging.
 

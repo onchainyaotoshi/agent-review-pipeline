@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.0.0-rc14 — 2026-04-15
+
+ARP eats its own dogfood. The rc13 e2e dispatch produced 5 findings JSON from Gemini ce:review; rc14 triages and applies them.
+
+### Triage of the 5 rc13 Gemini findings
+
+| # | File | Verdict | Rationale |
+|---|---|---|---|
+| 1 | `CHANGELOG.md:28` (medium) — fingerprint formula change not documented in rc12 | ❌ Skipped | Hallucination — the formula change happened in rc2 (`sha1(file:line:issue)` → `sha1(file:line:severity:normalize(issue):sha1(fix_code[:200]))`), not rc12. rc12 didn't touch fingerprinting. Flash-tier accuracy artifact. |
+| 2 | `plugin.json:32` (low) — geminiModel description out of sync | ✅ Applied | Description now mirrors README + SKILL.md: cites empirical reasoning, default rationale, cascade target. |
+| 3 | `SKILL.md:282` (low) — scrubber inline-credential threshold `{6,}` too lax | ❌ Skipped | Lowering to `{3,}` would false-positive on placeholder strings (`password = abc`). The proper fix is entropy/context gating, not threshold lowering. Deferred to a runtime-rewrite scrubber rework. |
+| 4 | `SKILL.md:64` (medium) — `normalize()` helper passes newlines through `sed` without `-z` | ✅ Applied | Added `tr '\n' ' '` between `tr '[:upper:]'` and the first `sed`. Multi-line issue text now collapses to a single space before whitespace normalization, producing a stable fingerprint. |
+| 5 | `CHANGELOG.md:42` (high) — major safety subsystems shipped without integration tests | ⚠️ Already documented | The integration-test-harness blocker is in CONTRIBUTING + the CHANGELOG "Still known-open" list since rc4. Flash flagged it as a finding because it appeared in the diff context, but it is a known acknowledged gap, not a regression. |
+
+### Net behavior change
+
+Two surface-level docs/spec patches; no executable behavior change beyond the `normalize()` newline handling, which only matters when an issue string contains a literal `\n` that produces fingerprint drift across runs. Those are rare in JSON-stringified findings but possible.
+
+### What this run proves
+
+The pipeline can not only produce findings but produce findings about itself, that we then act on — the smallest possible compound-engineering loop closing on one PR in one day. Memory `feedback-merge-after-e2e-pass.md` gate **still PASSES** since rc13's evidence is preserved in PR #1 history.
+
 ## 5.0.0-rc13 — 2026-04-15
 
 **🎯 First end-to-end Gemini-side validation passing.** All four prior Gemini dispatches today (rc7, rc11, rc12-pro, rc12-flash) failed to produce findings JSON — Pro deployments saturated, parallel persona spawn multiplied API call demand beyond available server capacity. rc13 closes the gate by combining two fixes:
