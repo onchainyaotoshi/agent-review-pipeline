@@ -1,5 +1,17 @@
 # Changelog
 
+## v5.4.0 — 2026-04-16
+
+**feat: /arp benchmark — Flash vs Pro findings quality comparison**
+
+New `benchmark` subcommand compares Gemini Flash (`gemini-3-flash-preview`) against Pro (`gemini-3.1-pro-preview`) on a specific PR. Scores findings by three numeric metrics — precision (confidence ≥ 0.80 fraction), depth (body length + file:line + fix_code composite), and FP rate (confidence < 0.70 fraction) — and prints a side-by-side ASCII table with a verdict. Writes `.arp_benchmark_<epoch>.json` artifact (gitignored, pruned after 7 days). Read-only: no auto-fix, no commit, no PR comment. Secret redaction applied to artifact at write-time (fail-closed). Motivation: ARP v5.3.0 hard-pinned Flash after Pro quota exhaustion — no empirical data existed to judge whether Pro findings are worth the higher cost. Benchmark provides that data to inform the decision.
+
+**Usage:** `/arp benchmark 251`
+
+**Pre-flight:** `scripts/probe-gemini.sh gemini-3.1-pro-preview` (verify Pro has headless capacity before running)
+
+---
+
 ## 5.3.2 — 2026-04-15
 
 First v5.3.x patch from a live dogfood dispatch on a real downstream consumer. Target: `camis_api_native` PR #251 ("fix(tabulator-filter): race condition — filter bar intermittently missing", 15-file frontend fix). Dispatch completed end-to-end: Codex × 2 returned 3 actionable medium-confidence findings; Gemini `/ce:review` ran 10 personas in parallel with zero 429s (first live validation of v5.3.0's Flash + API key Tier 1 + parallel path) and returned 10 findings — but Gemini's output skewed toward acknowledgments of what the PR already fixes rather than residual risk. Codex carried the real-bug load.
