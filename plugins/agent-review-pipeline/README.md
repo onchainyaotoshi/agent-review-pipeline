@@ -93,6 +93,22 @@ Preview without editing files:
 /arp --dry-run gemini  # preview Gemini's /ce:review findings only
 ```
 
+### Benchmark Mode
+
+Compare Gemini Flash vs Pro findings quality on a specific PR:
+
+```
+/arp benchmark 251
+```
+
+Runs both models against the PR, scores findings by precision / depth / FP rate, and prints a side-by-side comparison table. Read-only — no auto-fix, no commit, no PR comment.
+
+Before running, verify Pro model has headless capacity:
+
+```
+scripts/probe-gemini.sh gemini-3.1-pro-preview
+```
+
 Or just ask Claude: *"Review PR 42"* / *"Check this before commit"*.
 
 ### Pre-flight model probe
