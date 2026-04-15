@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.2.1
+version: 5.3.0
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Fetches PR conversation context (comments, reviews, unresolved threads) for cross-iteration continuity. Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** v5.2.1 — patch release closing the 3 Codex self-review findings from the v5.2.0 rc6 dispatch: (a) EXT_SUMMARY now sources from `gh pr diff "$PR_NUMBER" --name-only` to match the review target, not `git diff origin/$PR_BASE...HEAD` which diverged when local commits weren't pushed; (b) PR-scoped lock moved to fd 8 so it supplements the per-worktree fd 9 lock rather than replacing it — two /arp runs on different PRs in the same checkout now correctly serialize; (c) PR-context fetch failures now set a `context_fetch_failed:true` + `truncation_warning:true` overlay instead of being silently indistinguishable from "no prior discussion", and `jq` parse errors abort the pipeline rather than collapsing to `{}`. Gemini /ce:review validation of the v5.2.0 fork-side skill-name allowlist is still pending — Google daily quota bucket needs to reset before the next live dispatch. v5.2.0's shipped features (PR conversation context, expanded rules glob, pagination awareness, sentinel fail-closed, orchestrator-hallucination mitigation) are all retained unchanged. See CHANGELOG.
+> **Status:** v5.3.0 — breaking pivot on Gemini dispatch. Locks the pipeline to `gemini-3-flash-preview` via API key Tier 1 auth with parallel persona spawn. Model cascade (Flash → Flash-Lite via `ALLOW_FLASH_FALLBACK=1` + Pro override) is DROPPED. OAuth personal auth is DROPPED (empirically 429'd across both Flash and Pro on v5.2 release day from cumulative daily usage — insufficient headless quota for persona fan-out). Sequential persona dispatch from rc13 is REPLACED by parallel — API key endpoint is RPM-rate-limited (~1000 RPM Flash Tier 1) rather than server-cap-constrained, so parallel 6-persona burst fits. Expected wall time 3-5 min vs 10-15 min sequential. Step 0.3 dependency precheck fails closed if `GEMINI_API_KEY` env var unset or settings.json auth is still `oauth-personal`. Codex dispatches (OpenAI API, different auth) unchanged. Re-adding Pro or Flash-Lite requires a fork. See CHANGELOG for migration notes.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -25,7 +25,7 @@ Prompts are written to a temporary file `.arp_stage_prompt.md` to bypass OS argu
 | Engine | Dispatch | Target / Command | Framing |
 |--------|----------|------------------|---------|
 | `codex` | `Agent` tool | `codex:codex-rescue` subagent | ARP-controlled: runs **twice** — once per framing (correctness + adversarial) |
-| `gemini` | `Bash` tool | `timeout 1800 gemini -m "<geminiModel>" --approval-mode yolo --include-directories ~/.gemini/commands/ce -p "$(cat .arp_stage_prompt.md)" -o text` — guarded by pre-dispatch PR number + `<ref>` validation + post-dispatch `snapshot_git` diff write-check | Delegated: `/ce:review` runs Gemini's compound-engineering multi-persona pipeline internally |
+| `gemini` | `Bash` tool | `timeout 600 gemini -m "gemini-3-flash-preview" --approval-mode yolo --include-directories ~/.gemini/commands/ce -p "$(cat .arp_stage_prompt.md)" -o text` — requires `GEMINI_API_KEY` env var (v5.3.0 pin); guarded by pre-dispatch PR number + `<ref>` validation + post-dispatch `snapshot_git` diff write-check | Delegated: `/ce:review` runs Gemini's compound-engineering multi-persona pipeline internally (parallel persona spawn, v5.3.0) |
 
 **Why asymmetric:** Gemini already has `/ce:review`, a structured multi-persona review pipeline with P0-P3 severity tiering. Running ARP-side dual-framing on top would be redundant. Codex has no equivalent, so ARP provides the dual-framing discipline for Codex via two separate dispatches.
 
@@ -120,8 +120,9 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
    - If `both` or `codex`: confirm `codex:codex-rescue` Agent exists. Error: *"Install Codex plugin: /plugin install codex@openai-codex"*.
    - If `both` or `gemini`:
      - Run `gemini --version`; error: *"Install gemini CLI and authenticate"*.
-     - Run `gemini models list` and confirm `<geminiModel>` is listed; error: *"Model `<geminiModel>` not available. Run `gemini models list`."*.
+     - **Require API key auth (v5.3.0 pin).** Verify `GEMINI_API_KEY` env var is set (`[[ -n "${GEMINI_API_KEY:-}" ]]`); error: *"GEMINI_API_KEY not set. Generate key at https://aistudio.google.com/apikey and export. OAuth path unsupported in v5.3 (Google OAuth headless quota insufficient for persona fan-out — empirically 429'd across Flash and Pro on v5.2 release day)."* Also verify `~/.gemini/settings.json` auth selectedType is `gemini-api-key` via `jq -r '.security.auth.selectedType // ""' ~/.gemini/settings.json`; if mismatch, error: *"gemini-cli auth type is '<current>', must be 'gemini-api-key'. Open 'gemini' interactive and run /auth → API Key."*
      - Verify `~/.gemini/commands/ce/review.toml` exists; error: *"Install ce:review extension for Gemini"*.
+     - `gemini models list` is NOT called — it hangs on some CLI versions and a positive response from a single prompt probe is cheaper (see Gemini dispatch wrapper below).
    - Always run `gh auth status` (PR is the sole review target); error: *"Run `gh auth login` — ARP needs authenticated `gh` to resolve the PR diff"*.
 4. **Concurrency guard:** acquire an advisory file lock via `exec 9>.arp.lock && flock -n 9` at pipeline start. If the lock cannot be acquired, abort with *"Another ARP run is in progress. Wait for it to finish or remove `.arp.lock` after confirming no other process."*. The lock is released automatically when the shell exits, or explicitly via `flock -u 9` at the end of Step 2. This is a real kernel-level lock — no TOCTOU window.
 5. **Working-tree freshness check** (rc9 — prevents stale-diff re-review and double-fix corruption). Skip when `dryRun: true` (peek mode is harmless even with dirty tree).
@@ -345,18 +346,13 @@ Prompt: shared read-only contract + "You are a red-team attacker trying to break
 
 **Dispatch 3 — Gemini × /ce:review** (Bash tool):
 
-**Model cascade** — try `<geminiModel>` (default `gemini-3-flash-preview`), on `429`/quota error fall back to **`gemini-3.1-flash-lite-preview`** (Flash-Lite bucket — separate quota from Flash). **Flash-Lite fallback is gated and discouraged**: only allowed when env `ALLOW_FLASH_FALLBACK=1` is set, otherwise abort dispatch with *"Gemini Flash bucket exhausted; set ALLOW_FLASH_FALLBACK=1 to attempt gemini-3.1-flash-lite-preview (empirically returns `[]` empty findings under load) or retry later"*. This prevents silent quality degradation to a model that historically skips real persona work under pressure.
+**Model: pinned to `gemini-3-flash-preview` (v5.3.0).** v5.2 shipped with a model cascade (`gemini-3-flash-preview` → `gemini-3.1-flash-lite-preview` via `ALLOW_FLASH_FALLBACK=1` env, plus operator override to `gemini-3.1-pro-preview`). v5.3.0 drops the cascade and locks to Flash only. Rationale: (a) v5.2 empirical data showed Pro tier 429'd 28× in 2 minutes on a single dispatch attempt — unreliable for automation; (b) Flash-Lite fallback text itself admits "empirically returns `[]` empty findings under load" — degraded quality not worth the code path; (c) the API key Tier 1 path (below) gives Flash enough RPM headroom that parallel persona spawn works without cascade. Users who need Pro quality can add it back in a fork — mainline ARP is Flash-only.
 
-**Why default is `gemini-3-flash-preview` (rc13 — the breakthrough):** rc12 e2e validation surfaced the truth — `/ce:review` spawns 6+ persona sub-agents whose **parallel** activation pattern saturates Pro deployment server capacity (`gemini-3.1-pro-preview` and `gemini-2.5-pro` both fail with `MODEL_CAPACITY_EXHAUSTED` 429 batch failures). Two fixes landed together:
+**Auth: API key Tier 1 required (v5.3.0).** Set `export GEMINI_API_KEY=<key-from-aistudio.google.com/apikey>` and set `~/.gemini/settings.json` auth `selectedType` to `gemini-api-key` (via `gemini` interactive → `/auth` → API Key). OAuth personal path is unsupported in v5.3 — empirically 429'd on both Flash and Pro on v5.2 release day from cumulative ~20 dispatches in one day. API key Tier 1 quota (Flash: ~1000 RPM, ~4M tokens/min) is sufficient for parallel persona spawn; free tier (15 RPM Flash) is marginal and may trip on burst. The dependency precheck in Step 0.3 enforces both — ARP aborts before dispatch if `GEMINI_API_KEY` is unset or settings.json auth is still OAuth.
 
-1. **Fork-side: ce-review now dispatches personas SEQUENTIALLY by default on Gemini CLI** (compound-engineering-plugin commit `adc218e` on `fix/gemini-ce-review-dispatch`). Sequential keeps API call concurrency at 1 — fits within available server slots.
-2. **ARP-side: default model switched to `gemini-3-flash-preview`** which has its own server-cap pool (larger headroom than Pro deployments observed 2026-04-15). Gemini-3 family quality, Flash tier latency.
+**Dispatch: parallel personas (v5.3.0).** v5.2 used sequential persona spawn per fork commit `adc218e` (rc13 breakthrough) because OAuth `cloudcode-pa.googleapis.com` had tight server-cap per-account. API key endpoint (`generativelanguage.googleapis.com`) is RPM-rate-limited instead — parallel 6-persona burst × ~20 calls ≈ 120 calls in ~10 seconds peak, which fits under Tier 1 Flash 1000 RPM (~16.67 calls/sec ceiling when averaged). ARP now emits an explicit parallel-dispatch directive in the prompt body so ce-review orchestrator switches off its Gemini-CLI sequential default into "Parallel dispatch (opt-in fast path)" per its Stage 4 text. Wall-time expected 3-5× faster than sequential (~3-5 min instead of 10-15 min).
 
-This combination empirically delivered 5 valid findings JSON in 4395 bytes within a 10-minute timeout — first successful Gemini-side e2e validation. Operators may override `geminiModel` to `gemini-3.1-pro-preview` when Pro server-cap recovers and they want max quality.
-
-**Headless model-ID note:** the canonical Gemini-3 Pro model ID for `gemini -p ... -m <id>` is `gemini-3.1-pro-preview` — the `-preview` suffix stays on the headless API ID even though the interactive model-selector shows it as just `gemini-3.1-pro`. The unsuffixed name is a display label for the Auto-mode UI, not a valid `-m` argument (returns 404 ModelNotFound). Verify with `gemini models list`. Same for `gemini-3-flash`, which is display-only — ARP's gated flash fallback is `gemini-3.1-flash-lite-preview` (verified valid headless ID, separate Flash-Lite quota bucket).
-
-Per-model dispatch uses `timeout 1800` (30 min) — accommodates sequential persona spawn (~10-15 min realistic) plus orchestrator overhead. On timeout SIGTERM the subprocess and move to the next cascade step. The 600s limit from rc7 was too tight once rc13's sequential-spawn fix landed; rc15 bumps it.
+**Dispatch timeout** uses `timeout 600` (10 min — reverted from 30 min since parallel spawn completes inside 3-5 min and the longer timeout served the sequential regime). On timeout SIGTERM the subprocess and abort the Gemini side for this iteration; Codex findings still proceed.
 
 **`<ref>` validation** — before interpolation, validate against `^[A-Za-z0-9/_.-]+$`. Reject with *"Invalid ref: <ref>"* if it contains quotes, newlines, or shell metacharacters. Prevents shell injection through attacker-controlled branch/PR refs.
 
@@ -394,6 +390,8 @@ EXT_SUMMARY="${EXT_SUMMARY:-unknown}"
 ```
 /ce:review mode:report-only base:<ref>
 
+Dispatch mode: PARALLEL. This environment has Gemini API key Tier 1 auth with sufficient RPM headroom (Flash: ~1000 RPM) for concurrent persona spawn. Invoke all selected personas in a single batch per Stage 4 "Parallel dispatch (opt-in fast path)" instruction — do NOT use the Gemini CLI sequential default. Expected wall time 3-5 min instead of 10-15 min sequential.
+
 Diff file-extension summary: ${EXT_SUMMARY}
 (Use this for stack-specific persona selection — only dispatch reviewers whose language/framework actually appears in the summary. If no `.rb` files appear, skip `dhh-rails-reviewer` and `kieran-rails-reviewer`; if no `.py`, skip `kieran-python-reviewer`; if no `.ts`/`.tsx`, skip `kieran-typescript-reviewer` and `julik-frontend-races-reviewer`. Stack-specific reviewers are additive — running them on a diff that has no code in their stack is wasted dispatch budget.)
 
@@ -419,8 +417,11 @@ snapshot_git() {
 }
 GIT_BEFORE=$(snapshot_git)
 
-# 3. Dispatch — yolo approval + narrowed include-dir + hard timeout
-timeout 1800 gemini -m "<geminiModel>" --approval-mode yolo \
+# 3. Dispatch — yolo approval + narrowed include-dir + hard timeout.
+#    Model pinned to gemini-3-flash-preview (v5.3.0); cascade dropped.
+#    Auth: GEMINI_API_KEY env var must be set (Step 0.3 precheck enforces).
+#    Timeout reverted to 10 min — parallel persona spawn completes in 3-5 min.
+timeout 600 gemini -m "gemini-3-flash-preview" --approval-mode yolo \
   --include-directories "$HOME/.gemini/commands/ce" \
   -p "$(cat .arp_stage_prompt.md)" -o text
 
@@ -502,8 +503,9 @@ GIT_AFTER=$(snapshot_git)
 - Gemini read-only enforced via **three-layer defence**: `mode:report-only` prompt flag, `--include-directories` scoped to `~/.gemini/commands/ce` only (not `~/.gemini`), and post-dispatch snapshot diff (tracked-file changes + new non-ignored files) that aborts on any modification. Gitignored runtime artifacts are deliberately excluded so legitimate state cannot false-positive the check. `--approval-mode yolo` is needed because `plan` blocks the shell access `/ce:review` requires.
 - Same scrubber pattern set (API keys, JWT-shaped tokens, PEM private-key blocks, inline credential assignments, bearer tokens) is applied at three points: (1) PR comment body before `gh pr comment` (Step 2.5), (2) parse-error artifact files at write-time (JSON Robustness step 2), (3) session log on rotation (Step 2.6). Fail-closed at every point — scrubber error aborts the action rather than writing/posting raw.
 - `<ref>` validated against `^[A-Za-z0-9/_.-]+$` before interpolation — blocks shell/prompt injection through attacker-controlled branch or PR refs.
-- Model cascade fallback to `gemini-3.1-flash-lite-preview` (Flash-Lite bucket, separate quota from Flash) requires explicit `ALLOW_FLASH_FALLBACK=1` env — prevents silent review-quality downgrade. `gemini-3-flash` is not a valid headless `-m` argument (display-label only).
-- Per-model Gemini dispatch has a 30-minute `timeout 1800` watchdog (rc15, bumped from 600 to fit sequential persona spawn). On timeout, SIGTERM and move to next cascade step.
+- **Model locked to `gemini-3-flash-preview` (v5.3.0).** Cascade to Flash-Lite or Pro dropped. Attempting other models via `geminiModel` userConfig no-ops — Step 0.3 precheck pins the `-m` flag regardless. Re-adding Pro / Flash-Lite would require a fork.
+- **Auth locked to API key Tier 1 (v5.3.0).** `GEMINI_API_KEY` env var required; OAuth personal path unsupported (headless cumulative quota insufficient, empirically 429'd on release day). Step 0.3 aborts before dispatch if the env var is unset or settings.json auth is still OAuth.
+- Gemini dispatch has a 10-minute `timeout 600` watchdog — parallel persona spawn on API key Tier 1 completes in 3-5 min; anything beyond 10 min is assumed stuck. On timeout, SIGTERM and abort the Gemini side for this iteration (Codex findings still proceed).
 - Concurrency guard uses real `flock -n` advisory lock on `.arp.lock`, not an mtime sniff — no TOCTOU window.
 - Pre-flight working-tree freshness check (Step 0.5) aborts when `git diff --quiet HEAD` or `git diff --cached --quiet` is non-clean. Prevents the "second /arp run reviews stale PR-HEAD diff while the local tree already has a previous run's fixes" failure mode — wasted dispatch quota plus mid-loop "old_string not found" Edit corruption. Skipped under `--dry-run` because peek mode applies no edits.
 

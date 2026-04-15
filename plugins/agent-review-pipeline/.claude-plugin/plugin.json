@@ -1,6 +1,6 @@
 {
   "name": "agent-review-pipeline",
-  "version": "5.2.1",
+  "version": "5.3.0",
   "description": "Autonomous code review pipeline with asymmetric dual-engine dispatch. Codex runs ARP's correctness + adversarial framings (2 dispatches); Gemini runs its own /ce:review compound-engineering pipeline (1 dispatch). Confidence-weighted consensus, bounded auto-fix loop, loop-thrash kill switch, safe-off defaults.",
   "author": {
     "name": "Yaotoshi",
@@ -27,10 +27,10 @@
       "description": "Engine selection when none specified on CLI. Values: both, gemini, codex."
     },
     "geminiModel": {
-      "title": "Gemini Model",
+      "title": "Gemini Model (informational — pinned in v5.3.0)",
       "type": "string",
       "default": "gemini-3-flash-preview",
-      "description": "Model passed to gemini CLI via -m flag. Default gemini-3-flash-preview because rc13 e2e proved Pro deployments (3.1-pro-preview, 2.5-pro) saturate at MODEL_CAPACITY_EXHAUSTED 429 batches under ce:review parallel persona spawn. Cascade on 429: <geminiModel> → (gated ALLOW_FLASH_FALLBACK=1) gemini-3.1-flash-lite-preview. Verify supported models with 'gemini models list'."
+      "description": "v5.3.0 pin: model is hardcoded to gemini-3-flash-preview in the dispatch wrapper regardless of this userConfig. Changing this value has no effect. Rationale: v5.2 cascade (Flash → Flash-Lite → operator-override Pro) shipped with two flaws — (a) Flash-Lite fallback doc admits '[] empty findings under load' (degraded quality), (b) Pro tier 429'd 28× in 2 min on v5.2 release day (unreliable). v5.3 ships Flash-only with API key Tier 1 auth + parallel persona spawn. Re-adding Pro requires a fork of this plugin."
     },
     "autoCommit": {
       "title": "Auto Commit Fixes",

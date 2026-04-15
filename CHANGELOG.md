@@ -1,5 +1,44 @@
 # Changelog
 
+## 5.3.0 — 2026-04-15
+
+**BREAKING.** Gemini dispatch locked to `gemini-3-flash-preview` via API key Tier 1 auth with parallel persona spawn. Model cascade and OAuth personal auth are dropped. Users on v5.2.x with `geminiModel=gemini-3.1-pro-preview` userConfig or `ALLOW_FLASH_FALLBACK=1` env workflows must either stay on v5.2.x or fork this plugin.
+
+### Breaking
+
+- **Dropped: model cascade.** v5.2.x had `<geminiModel>` → (gated `ALLOW_FLASH_FALLBACK=1`) `gemini-3.1-flash-lite-preview` cascade on 429, plus operator override to `gemini-3.1-pro-preview`. v5.3.0 hardcodes `-m "gemini-3-flash-preview"` in the dispatch wrapper; `geminiModel` userConfig is now informational-only (changing it has no effect). Step 0.3 dependency precheck no longer calls `gemini models list` (hangs on some CLI versions; a single-prompt probe is cheaper).
+- **Dropped: OAuth personal auth.** v5.3.0 requires `GEMINI_API_KEY` env var. Step 0.3 precheck aborts with instructions to https://aistudio.google.com/apikey if the env var is unset, and also verifies `~/.gemini/settings.json` auth `selectedType` is `gemini-api-key` (not `oauth-personal`). OAuth path produced 7× 429 on Flash and 28× 429 on Pro within 2 minutes on v5.2 release day — cumulative daily quota insufficient for persona fan-out on automation workloads.
+- **Changed: persona dispatch from sequential to parallel.** rc13 introduced sequential persona spawn on Gemini CLI (fork commit `adc218e`) because OAuth `cloudcode-pa.googleapis.com` had tight server-cap per-account. API key endpoint (`generativelanguage.googleapis.com`) is RPM-rate-limited instead — Tier 1 Flash gives ~1000 RPM, enough for 6-persona parallel burst (~120 calls in ~10 sec peak). ARP now emits an explicit `Dispatch mode: PARALLEL` directive in the prompt body so ce-review orchestrator switches off its Gemini-CLI sequential default into "Parallel dispatch (opt-in fast path)" per its Stage 4 text. Expected wall time 3-5 min vs 10-15 min sequential.
+- **Changed: timeout 1800 → 600.** rc15 bumped to 30 min to fit sequential persona spawn. Parallel completes in 3-5 min; 10 min is generous. Longer run = assumed stuck.
+
+### Rationale
+
+The v5.2.x cascade + sequential + OAuth design was the best configuration available at release day given empirical constraints (OAuth quota sharing Pro and Flash buckets, persona spawn server-cap). On v5.2 release day itself, OAuth quota exhausted mid-dispatch and validation of the fork-side halu-fix could not complete. API key Tier 1 ($3 minimum billing, pay-per-token from there) unlocks:
+
+- Flash RPM headroom (~1000 RPM) sufficient for parallel spawn without tripping
+- Quota separation (API key bucket ≠ OAuth interactive bucket) so sustained automation doesn't starve interactive use
+- Predictable cost (~$0.013 per dispatch Flash paid tier, ~$4/month moderate use)
+
+Dropping the cascade simplifies the dispatch wrapper from ~30 lines of cascade + fallback + `ALLOW_FLASH_FALLBACK` gating to a single `timeout 600 gemini -m gemini-3-flash-preview ...`. Pin vs cascade is a reliability tradeoff — pin is easier to reason about and cheaper to operate; cascade was there for quota resilience that API key Tier 1 now provides structurally.
+
+### Validation status
+
+The v5.2.0 fork-side skill-name allowlist guard (`compound-engineering-plugin@d92a93e`) was shipped with mechanism-tested but not effect-under-load-tested. The API key Tier 1 smoke test (`gemini -m gemini-3-flash-preview -p "say: tier1 test ok"`) returned "tier1 test ok" in <15 sec, confirming the auth path is live. Full end-to-end validation (`/arp --dry-run 3` on merged PR #3 with Codex × 2 + Gemini × /ce:review parallel) is pending — next dispatch cycle.
+
+### Migration path for users
+
+1. **Generate API key** at https://aistudio.google.com/apikey (free Tier 1 eligible with billing enabled).
+2. **Export env var:** `export GEMINI_API_KEY='<key>'` (add to shell profile for persistence).
+3. **Switch gemini-cli auth:** open `gemini` interactive, `/auth`, select "API Key". Or edit `~/.gemini/settings.json`: `"security": { "auth": { "selectedType": "gemini-api-key" } }`.
+4. **Reinstall plugin:** `/plugin marketplace update agent-review-pipeline` + uninstall + install + `/reload-plugins`.
+5. **Test:** `/arp --dry-run <N>` on a PR with Gemini dispatch — Flash parallel should complete in 3-5 min.
+
+### Not changed
+
+- Codex dispatches (correctness + adversarial via `codex:codex-rescue`) — different auth stack, unaffected.
+- Fork-side skill-name allowlist guard (`compound-engineering-plugin/ce-review/SKILL.md` Stage 4) — still in effect, prevents orchestrator hallucination regardless of parallel/sequential.
+- Safety rails, kill switch, redaction, concurrency locks (fd 8 + fd 9), PR-context handling — all v5.2.1 semantics retained.
+
 ## 5.2.1 — 2026-04-15
 
 Patch release closing all three Codex self-review findings from the v5.2.0 rc6 dispatch. Gemini validation of v5.2.0's fork-side skill-name allowlist is still pending (Google daily quota bucket needs to reset); applying these patches without waiting because they're independently verifiable from the Codex findings and the fixes are targeted.
