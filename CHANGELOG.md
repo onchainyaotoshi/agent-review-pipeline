@@ -1,5 +1,26 @@
 # Changelog
 
+## 5.2.0-rc4 — 2026-04-15
+
+rc3 was reviewed by ARP again (Codex × 2 — the Gemini flash-tier orchestrator hallucinated a nonexistent `generalist` tool on the dense bash + jq + GraphQL diff and hung before producing findings JSON). Codex found 2 HIGH bugs in rc3 plus the cleanup-glob nit that rc3 claimed to fix but didn't.
+
+### Fixed (HIGH)
+
+- **rc3 GraphQL PR-context query had no pagination awareness (SKILL.md:196).** The single-fetch query capped `comments(first: 50)`, `reviews(first: 50)`, `reviewThreads(first: 50)`, and per-thread `comments(first: 20)` but never requested `pageInfo { hasNextPage }` and never signaled when a connection hit the cap. **Comment-flood attack:** an attacker registering 50+ comments pushes real maintainer signal off the first page; ARP reviews truncated context as if it were complete and may assert "no maintainer has pushed back on this" from what is actually a partial window. rc4 requests `pageInfo { hasNextPage }` on all four paged connections, computes a `truncation_warning` boolean in the processed jq output (true if any top-level or any nested-thread page was capped), and updates the engine prompt instruction: when `truncation_warning` is true, treat conversation context as partial and never infer maintainer consensus from silence. Explicit-dismissal suppression (the positive signal in clause a) still applies.
+- **rc3 sentinel ID generation fails open (SKILL.md:251).** `ARP_RUN_ID=$(head -c 8 /dev/urandom | xxd -p)` had no error check. In stripped containers where `/dev/urandom` is unmounted, or environments where `xxd` isn't installed, the pipe silently yields empty string → the sentinel collapses to predictable literal markers `BEGIN_PR_CONTEXT_` / `END_PR_CONTEXT_` → **rc2's entire injection-bypass defence reopens.** Defeats the whole point of rc3's sentinel mechanism. rc4 wraps the pipe in `$(set -o pipefail; head -c 8 /dev/urandom | xxd -p)` so either tool's failure propagates, aborts on non-zero exit, then regex-validates against `^[0-9a-f]{16}$` before the sentinel is interpolated anywhere. Abort rather than degrade — there is no safe fallback to a non-random marker.
+
+### Fixed (LOW)
+
+- **rc3 cleanup glob still missed `.arp_pr_context.json.tmp`.** rc2 claimed to fix the glob mismatch but rc3's Step 2.6 cleanup line still had `.arp_*_tmp` (underscore before tmp), which does not match the rc3 atomic-write sidecar `.arp_pr_context.json.tmp` (dot before tmp). Sidecar lingered across runs. rc4 uses `.arp_*.tmp`.
+
+### Dispatch health observation (not a bug — a capability bound)
+
+- Gemini flash-tier orchestrator hallucinated a `generalist` tool name when given the dense bash + jq + GraphQL rc3 diff. Output stuck at 2333 bytes after ~10 min wall, never produced findings JSON, killed manually before the 30-min watchdog fired. Implication: complex bash-heavy diffs with 100+ lines of quoted GraphQL and jq filters may exceed flash-tier reliable comprehension even though the model technically accepts them. Mitigation tried for rc4: dispatch with `geminiModel=gemini-3.1-pro-preview` first (Pro server-cap likely recovered overnight); fall back to flash only if Pro exhausts.
+
+### Lesson
+
+Four consecutive rcs (rc1, rc2, rc3, rc4) on the same feature, each finding bugs in the previous rc. rc3's two HIGH bugs illustrate the compound-engineering loop's specific value: both bugs were mechanisms where the feature **looked correct statically but silently degraded at runtime** — the pagination gap is invisible on PRs with <50 comments, and the sentinel empty-string case only triggers in unusual container environments. These are exactly the failure modes a single-pass review or CI suite would not catch, because the happy path continues to pass. The dogfood loop surfaces them because the attacker-model framing forces the review to actively look for degradation paths, not just functional correctness.
+
 ## 5.2.0-rc3 — 2026-04-15
 
 rc2 was reviewed by ARP again. 9 findings (Codex × 2 + Gemini × 1) surfaced **2 HIGH bugs in rc2 itself** plus a third sneaky vulnerability that defeated rc2's entire prompt-injection fix.
