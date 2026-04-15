@@ -41,8 +41,9 @@ The following need a runtime orchestrator (not prompt-driven) before this plugin
 - Deterministic fingerprint computation
 - Session log concurrency safety (file locks — partially addressed in rc2 via flock)
 - LLM-side cost pre-estimate
-- Redaction pass for PR comment
+- On-disk scrubbing for session logs and parse-error artifacts (PR-comment scrub landed in rc5 — local artifacts still raw)
 - Integration test harness (draft spec at `docs/specs/integration-test-harness.md`; implementation deferred)
+- Enforced Codex read-only (prompt-level only)
 
 Contributions toward these are welcome. Open an issue first to align on approach.
 

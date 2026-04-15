@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc4
+version: 5.0.0-rc5
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number | files]"
 ---
 
-> **Status:** Release candidate (rc4). rc2 addressed 3 security issues from PR #1's first e2e run; rc3 refined the post-dispatch write-check and documented the empirically-dead flash fallback path; rc4 upgrades parse-error handling from silent-skip to explicit per-source diagnostics with raw-output artifacts, and ships a draft integration-test-harness spec. See CHANGELOG.
+> **Status:** Release candidate (rc5). rc2 addressed 3 security issues from PR #1's first e2e run; rc3 refined the post-dispatch write-check and documented the empirically-dead flash fallback path; rc4 upgraded parse-error handling and shipped the integration-test-harness spec; rc5 adds explicit PR-comment redaction (API keys, JWTs, PEM key blocks, inline credentials, bearer tokens) with fail-closed behavior. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -62,6 +62,10 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
     "rate": 0.625
   },
   "fingerprints_seen": ["<sha1>", "..."],
+  "redactions": {
+    "redactions_applied": 2,
+    "kinds": ["api-key", "credential"]
+  },
   "parse_errors": [
     {
       "source": "gemini:ce-review",
@@ -230,7 +234,18 @@ GIT_AFTER=$(snapshot_git)
 2. Print summary to stdout always.
 3. If `dryRun: true`: stop — do not commit, do not post.
 4. If `autoCommit: true`: execute `git add .` and `git commit -m "chore(arp): autonomous review fixes"`. Off by default.
-5. If `postPrComment: true`: post executive summary to GitHub PR via `gh pr comment`. Off by default.
+5. If `postPrComment: true`: scrub the executive summary body for secrets/PII (see **Redaction** below), then post to GitHub PR via `gh pr comment`. Off by default. **Fail-closed:** if the scrubber errors or matches a pattern but cannot replace it, abort the post and print the failure — never publish raw on a redaction failure.
+
+   **Redaction patterns** (case-insensitive where applicable, applied per-line):
+   - API keys: `sk-[A-Za-z0-9]{20,}`, `sk-ant-[A-Za-z0-9_-]{20,}`, `ghp_[A-Za-z0-9]{36}`, `gho_[A-Za-z0-9]{36}`, `ghu_[A-Za-z0-9]{36}`, `ghs_[A-Za-z0-9]{36}`, `glpat-[A-Za-z0-9_-]{20,}`, `xox[abprs]-[A-Za-z0-9-]{10,}`, `AKIA[0-9A-Z]{16}`, `ASIA[0-9A-Z]{16}` → `[REDACTED-API-KEY]`
+   - JWT-shaped: `eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}` → `[REDACTED-JWT]`
+   - PEM private keys: any line starting with `-----BEGIN ` and ending with ` PRIVATE KEY-----` (and following lines until the matching `-----END ...-----`) → `[REDACTED-PRIVATE-KEY-BLOCK]`
+   - Inline credential assignment in code snippets: `(?i)(password|passwd|pwd|secret|api[_-]?key|access[_-]?key|auth[_-]?token|private[_-]?key)\s*[:=]\s*["']?([^"'\s,;]{6,})["']?` → preserve the LHS, replace value with `[REDACTED-CREDENTIAL]`
+   - Bearer tokens in headers: `Bearer\s+[A-Za-z0-9._\-+/=]{16,}` → `Bearer [REDACTED-BEARER]`
+
+   **Telemetry:** record `{ "redactions_applied": <int>, "kinds": ["api-key", "credential", ...] }` in the session log under a top-level `redactions` field. If `redactions_applied > 0`, append a footer to the PR comment body: *"> Note: N strings matching secret-pattern heuristics were redacted from this comment. The original session log is kept locally (gitignored) for human review."*
+
+   **Scope note:** redaction applies to the PR comment body only. Local session logs and `.arp_parse_error_*.txt` artifacts are gitignored and may contain raw model output including any secrets the reviewer model echoed back — treat them as sensitive (don't paste, don't upload). A future runtime-rewrite branch should also scrub these on disk; spec'd here so callers know the current threat model.
 6. Clean up `.arp_stage_prompt.md` and release the lock via `flock -u 9` (then `rm -f .arp.lock`). Rename `.arp_session_log.json` to `.arp_session_log.<timestamp>.json`. Prune `.arp_session_log.*.json` and `.arp_parse_error_*.txt` older than 7 days from the repo root to prevent unbounded growth.
 
 ## Safety Rails
@@ -241,7 +256,8 @@ GIT_AFTER=$(snapshot_git)
 - Dependency precheck fails fast before any engine is dispatched.
 - Parse errors persisted to `.arp_parse_error_<source>_iter<N>_<epoch>.txt` and surfaced per-source in the Deliver summary. Not fatal, but no longer silent-skipped.
 - Codex dispatches prefix prompt with **"READ-ONLY review. Do not edit any file"** to prevent Codex from auto-editing in parallel with ARP orchestrator.
-- Gemini read-only enforced via **three-layer defence**: `mode:report-only` prompt flag, `--include-directories` scoped to `~/.gemini/commands/ce` only (not `~/.gemini`), and post-dispatch `git status --porcelain` write-check that aborts on any modification. `--approval-mode yolo` is needed because `plan` blocks the shell access `/ce:review` requires.
+- Gemini read-only enforced via **three-layer defence**: `mode:report-only` prompt flag, `--include-directories` scoped to `~/.gemini/commands/ce` only (not `~/.gemini`), and post-dispatch snapshot diff (tracked-file changes + new non-ignored files) that aborts on any modification. Gitignored runtime artifacts are deliberately excluded so legitimate state cannot false-positive the check. `--approval-mode yolo` is needed because `plan` blocks the shell access `/ce:review` requires.
+- PR comment body scrubbed for API keys, JWT-shaped tokens, PEM private-key blocks, inline credential assignments, and bearer tokens before posting (see Step 2.5). Fail-closed: scrubber error or unreplaceable match aborts the post rather than publishing raw.
 - `<ref>` validated against `^[A-Za-z0-9/_.-]+$` before interpolation — blocks shell/prompt injection through attacker-controlled branch or PR refs.
 - Model cascade fallback to `gemini-2.5-flash` requires explicit `ALLOW_FLASH_FALLBACK=1` env — prevents silent review-quality downgrade when pro-tier quota is exhausted (by attacker or ambient usage).
 - Per-model Gemini dispatch has a 10-minute `timeout 600` watchdog. On timeout, SIGTERM and move to next cascade step.

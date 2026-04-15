@@ -1,5 +1,33 @@
 # Changelog
 
+## 5.0.0-rc5 — 2026-04-15
+
+Closes the PR-comment redaction blocker. Continues the same-day rc cycle while quota recovers.
+
+### Added
+
+- **PR-comment scrubber** (Step 2.5). Before posting the executive summary via `gh pr comment`, redact:
+  - API keys: `sk-*`, `sk-ant-*`, `ghp_*`, `gho_*`, `ghu_*`, `ghs_*`, `glpat-*`, `xox[abprs]-*`, `AKIA*`, `ASIA*` → `[REDACTED-API-KEY]`
+  - JWT-shaped tokens (`eyJ...` 3-segment) → `[REDACTED-JWT]`
+  - PEM private-key blocks (multi-line `-----BEGIN ... PRIVATE KEY----- … -----END ...-----`) → `[REDACTED-PRIVATE-KEY-BLOCK]`
+  - Inline credential assignments (`password|secret|api_key|access_key|auth_token|private_key = "..."`) → preserve LHS, replace value with `[REDACTED-CREDENTIAL]`
+  - Bearer tokens (`Bearer <16+ chars>`) → `Bearer [REDACTED-BEARER]`
+- **Fail-closed behavior:** scrubber error or unreplaceable match aborts the post — never publishes raw on a redaction failure.
+- **Telemetry:** `redactions: { redactions_applied, kinds[] }` field added to session log schema. When `redactions_applied > 0`, a footer line is appended to the PR comment so reviewers know the body was modified.
+- **Threat-model note:** local session logs and `.arp_parse_error_*.txt` artifacts are NOT scrubbed — they're gitignored and may contain raw model output. Documented as sensitive; future runtime-rewrite branch should scrub on disk.
+
+### Fixed
+
+- **Safety Rails Gemini bullet drift.** rc3 changed the post-dispatch write-check from `git status --porcelain` to a snapshot-diff approach, but the Safety Rails section was never updated and still cited the old mechanism. Now matches the canonical wrapper pseudocode.
+
+### Still known-open
+
+- Deterministic fingerprint across Claude sessions (LLM-dependent `normalize(issue)` text)
+- Integration test harness implementation (spec at `docs/specs/integration-test-harness.md`)
+- `/ce:review` `-p` headless reliability (hang observed on 2.5-flash in PR #1 run)
+- Enforced Codex read-only (prompt-level only; codex-rescue may still pass `--write`)
+- LLM-side cost pre-estimate
+
 ## 5.0.0-rc4 — 2026-04-15
 
 Quota-wait productivity pass — tackles two named production blockers without burning dispatch quota.
