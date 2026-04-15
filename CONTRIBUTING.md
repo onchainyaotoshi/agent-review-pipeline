@@ -41,7 +41,7 @@ The following need a runtime orchestrator (not prompt-driven) before this plugin
 - Deterministic fingerprint computation
 - Session log concurrency safety (file locks — partially addressed in rc2 via flock)
 - LLM-side cost pre-estimate
-- On-disk scrubbing for session logs and parse-error artifacts (PR-comment scrub landed in rc5 — local artifacts still raw)
+- In-memory dispatch buffer scrubbing (PR-comment, parse-error artifacts, and session log on rotation all scrubbed in rc5-rc7; in-memory buffers between scrub points need a runtime rewrite)
 - Integration test harness (draft spec at `docs/specs/integration-test-harness.md`; implementation deferred)
 
 Contributions toward these are welcome. Open an issue first to align on approach.

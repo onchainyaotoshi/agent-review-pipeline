@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.0.0-rc7 — 2026-04-15
+
+Closes the on-disk artifact-scrub blocker introduced as a narrower follow-up in rc5. Reuses the rc5 scrubber pattern set at two new write points.
+
+### Added
+
+- **Parse-error artifact scrubbing at write-time.** Before persisting raw dispatch output to `.arp_parse_error_*.txt`, run the rc5 scrubber over the content (API keys, JWTs, PEM blocks, inline credentials, bearer tokens). Artifacts are diagnostic-only — no downstream code reads them — so write-time scrubbing is the simplest correct point.
+- **Session log scrubbing on rotation.** In Step 2.6 cleanup, scrub `.arp_session_log.json` string values (file paths, issue text, fix_code) before renaming to `.arp_session_log.<timestamp>.json`. The active log stays raw during the run because kill-switch fingerprint matching reads it back; the archived copy is scrubbed so secret material does not accumulate across runs.
+- **Fail-closed at every scrub point.** Scrubber error during artifact write or log rotation aborts the action rather than writing/archiving raw, matching Step 2.5 semantics.
+
+### Result
+
+The rc5 scope-note caveat ("future runtime-rewrite branch should also scrub these on disk") is closed in prompt-form. Remaining attack surface is in-memory dispatch buffers between scrub points, which truly does require a runtime rewrite to address — narrowed in CONTRIBUTING.
+
+### Still known-open
+
+- Deterministic fingerprint across Claude sessions (LLM-dependent `normalize(issue)` text)
+- LLM-side cost pre-estimate
+- In-memory dispatch buffer scrubbing (narrowed from on-disk scrub)
+- Integration test harness implementation (spec at `docs/specs/integration-test-harness.md`)
+- `/ce:review` `-p` headless reliability (external — Gemini CLI / quota)
+
 ## 5.0.0-rc6 — 2026-04-15
 
 Closes the enforced-Codex-read-only blocker. Continues the same-day rc cycle while quota recovers.

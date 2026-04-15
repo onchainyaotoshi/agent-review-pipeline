@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc6
+version: 5.0.0-rc7
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number | files]"
 ---
 
-> **Status:** Release candidate (rc6). rc2 addressed 3 security issues from PR #1's first e2e run; rc3 refined the post-dispatch write-check; rc4 upgraded parse-error handling and shipped the integration-test-harness spec; rc5 added PR-comment redaction; rc6 closes the enforced-Codex-read-only blocker with a two-layer defence (verbatim read-only contract + snapshot_git pre/post each Codex Agent call). See CHANGELOG.
+> **Status:** Release candidate (rc7). rc2 addressed 3 security issues from PR #1's first e2e run; rc3-rc6 closed write-check refinement, parse-error diagnostics, integration-harness spec, PR-comment redaction, and Codex enforced-read-only; rc7 extends the rc5 scrubber to parse-error artifacts (write-time) and rotated session logs (rotation-time), closing the on-disk scrub blocker. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -203,7 +203,7 @@ GIT_AFTER=$(snapshot_git)
 
 **JSON Robustness:**
 1. On parse failure per dispatch, strip outer markdown fence (``` / ```json) if present and re-parse.
-2. On second failure, persist the raw output to `.arp_parse_error_<source>_iter<N>_<epoch>.txt` (e.g. `.arp_parse_error_gemini-ce-review_iter2_1713195845.txt`) and record a diagnostics object in the session log's `parse_errors` array:
+2. On second failure, **run the rc5 scrubber over the raw output first** (same pattern set as Step 2.5 — API keys, JWTs, PEM blocks, inline credentials, bearer tokens), then persist the scrubbed text to `.arp_parse_error_<source>_iter<N>_<epoch>.txt` (e.g. `.arp_parse_error_gemini-ce-review_iter2_1713195845.txt`). The artifact is diagnostic-only — no downstream code reads it — so scrubbing at write-time is safe and prevents secret material from sitting on disk in plaintext. Record a diagnostics object in the session log's `parse_errors` array:
    ```json
    { "source": "gemini:ce-review", "iteration": 2, "artifact": ".arp_parse_error_gemini-ce-review_iter2_1713195845.txt", "raw_bytes": 4823, "raw_sha1": "<sha1>", "first_200_chars": "..." }
    ```
@@ -253,8 +253,8 @@ GIT_AFTER=$(snapshot_git)
 
    **Telemetry:** record `{ "redactions_applied": <int>, "kinds": ["api-key", "credential", ...] }` in the session log under a top-level `redactions` field. If `redactions_applied > 0`, append a footer to the PR comment body: *"> Note: N strings matching secret-pattern heuristics were redacted from this comment. The original session log is kept locally (gitignored) for human review."*
 
-   **Scope note:** redaction applies to the PR comment body only. Local session logs and `.arp_parse_error_*.txt` artifacts are gitignored and may contain raw model output including any secrets the reviewer model echoed back — treat them as sensitive (don't paste, don't upload). A future runtime-rewrite branch should also scrub these on disk; spec'd here so callers know the current threat model.
-6. Clean up `.arp_stage_prompt.md` and release the lock via `flock -u 9` (then `rm -f .arp.lock`). Rename `.arp_session_log.json` to `.arp_session_log.<timestamp>.json`. Prune `.arp_session_log.*.json` and `.arp_parse_error_*.txt` older than 7 days from the repo root to prevent unbounded growth.
+   **Scope note (rc7):** redaction applies to the PR comment body, parse-error artifacts (scrubbed at write-time, see JSON Robustness step 2), and rotated session logs (scrubbed on rotation, see Step 2.6). The active session log stays raw during the run because kill-switch fingerprint matching reads it back — but it lives in memory of the iteration, is gitignored, and is scrubbed before archival. Live `.arp_*` artifacts in the working directory between iterations should still be treated as sensitive (don't paste, don't upload). Fully runtime-side scrubbing of in-memory dispatch buffers is the only remaining attack surface and is deferred to the runtime-rewrite branch.
+6. Clean up `.arp_stage_prompt.md` and release the lock via `flock -u 9` (then `rm -f .arp.lock`). **Scrub the session log on rotation:** before renaming `.arp_session_log.json` to `.arp_session_log.<timestamp>.json`, run the rc5 scrubber over the JSON file's string values (file content, issue text, fix_code) — the active log stays raw during the run for kill-switch fingerprint matching, but the archived copy is scrubbed so secret material doesn't accumulate across runs. If the scrubber errors, abort rotation rather than archive raw content (matches Step 2.5 fail-closed semantics). Prune `.arp_session_log.*.json` and `.arp_parse_error_*.txt` older than 7 days from the repo root to prevent unbounded growth.
 
 ## Safety Rails
 
@@ -265,7 +265,7 @@ GIT_AFTER=$(snapshot_git)
 - Parse errors persisted to `.arp_parse_error_<source>_iter<N>_<epoch>.txt` and surfaced per-source in the Deliver summary. Not fatal, but no longer silent-skipped.
 - Codex dispatches enforced read-only via **two layers**: (1) shared read-only contract prompt prefix using verbatim recognition phrasing from `codex-rescue`'s selection guidance ("review only, no edits") so the agent skips its default `--write` flag and explicit instruction not to pass `--write` to `codex-companion`; (2) `snapshot_git` pre/post each Codex Agent call — divergence aborts the pipeline with source-attributed error message.
 - Gemini read-only enforced via **three-layer defence**: `mode:report-only` prompt flag, `--include-directories` scoped to `~/.gemini/commands/ce` only (not `~/.gemini`), and post-dispatch snapshot diff (tracked-file changes + new non-ignored files) that aborts on any modification. Gitignored runtime artifacts are deliberately excluded so legitimate state cannot false-positive the check. `--approval-mode yolo` is needed because `plan` blocks the shell access `/ce:review` requires.
-- PR comment body scrubbed for API keys, JWT-shaped tokens, PEM private-key blocks, inline credential assignments, and bearer tokens before posting (see Step 2.5). Fail-closed: scrubber error or unreplaceable match aborts the post rather than publishing raw.
+- Same scrubber pattern set (API keys, JWT-shaped tokens, PEM private-key blocks, inline credential assignments, bearer tokens) is applied at three points: (1) PR comment body before `gh pr comment` (Step 2.5), (2) parse-error artifact files at write-time (JSON Robustness step 2), (3) session log on rotation (Step 2.6). Fail-closed at every point — scrubber error aborts the action rather than writing/posting raw.
 - `<ref>` validated against `^[A-Za-z0-9/_.-]+$` before interpolation — blocks shell/prompt injection through attacker-controlled branch or PR refs.
 - Model cascade fallback to `gemini-2.5-flash` requires explicit `ALLOW_FLASH_FALLBACK=1` env — prevents silent review-quality downgrade when pro-tier quota is exhausted (by attacker or ambient usage).
 - Per-model Gemini dispatch has a 10-minute `timeout 600` watchdog. On timeout, SIGTERM and move to next cascade step.
