@@ -1,5 +1,24 @@
 # Changelog
 
+## 5.3.1 — 2026-04-15
+
+UX patch on v5.3.0 precheck. Surfaced by user question: "kalau user udah set gemini-cli pake API key auth, kenapa masih perlu set `GEMINI_API_KEY` env var di ARP precheck juga?"
+
+### Fixed
+
+- **Dropped explicit `GEMINI_API_KEY` env var check in Step 0.3.** v5.3.0 checked both the env var AND the settings.json auth type. The env var check was over-defensive: gemini-cli separates auth-type config (`~/.gemini/settings.json` → commitable) from credential (env var or `.env` file → never in config). It auto-loads `.env` from the invocation cwd or `~/.gemini/.env`, so a user who configured credentials via `.env` would hit a spurious ARP precheck failure even though the actual `gemini -p ...` dispatch would succeed. The same problem hit Claude Code's Bash subshell specifically — env vars exported in the user's shell profile don't always inherit into the subshell unless Claude Code is restarted or uses `update-config` to persist, so precheck would block legitimate `.env`-configured users.
+- **Kept settings.json auth-type check.** That's pure config (user explicitly chose API Key via `/auth`); precheck validating it is cheap and catches OAuth-still-selected mistakes early.
+- **Trust gemini-cli's own credential error.** Its error message is actionable and points both to env var and `.env` as fixes: *"When using Gemini API, you must specify the GEMINI_API_KEY environment variable. Update your environment and try again (no reload needed if using .env)!"* Surfacing that error at dispatch time (~1 sec failure) is better than blocking at precheck on a false negative when `.env` is properly configured.
+
+### Not changed
+
+- v5.3.0's core pins (Flash-only model hardcoded, API key auth-type required, parallel persona spawn directive, 10-min timeout, cascade + OAuth + sequential all dropped) retained.
+- Codex dispatches, safety rails, kill switch, fork-side allowlist guard unchanged.
+
+### Lesson
+
+Precheck should validate what *configuration* requires (explicitly settable by user in config files), not duplicate what the downstream tool *already validates* (credentials the tool loads via its own mechanism). v5.3.0's env var check bridged both, making ARP brittle to a perfectly valid gemini-cli setup style. v5.3.1 tightens the division: ARP checks config (auth type), gemini-cli checks credential (key presence/validity).
+
 ## 5.3.0 — 2026-04-15
 
 **BREAKING.** Gemini dispatch locked to `gemini-3-flash-preview` via API key Tier 1 auth with parallel persona spawn. Model cascade and OAuth personal auth are dropped. Users on v5.2.x with `geminiModel=gemini-3.1-pro-preview` userConfig or `ALLOW_FLASH_FALLBACK=1` env workflows must either stay on v5.2.x or fork this plugin.
