@@ -1,5 +1,60 @@
 # Changelog
 
+## 5.1.0 — 2026-04-15
+
+First GA after 15 same-day release candidates. Pipeline is provably end-to-end reliable on both Codex and Gemini engines with the fork-side sequential persona spawn (`onchainyaotoshi/compound-engineering-plugin@917a6f2` on `fix/gemini-ce-review-dispatch`) installed.
+
+### Compounding engineering loop closed
+
+The compound-engineering thesis got tested against itself:
+- rc1 design → rc2-rc12 hardening from each rc's own e2e findings
+- rc13 first successful Gemini findings JSON delivery (5 substantive findings)
+- rc14 applied 2 of those 5 findings; ran another e2e producing 18 raw findings
+- rc15 applied 7 of those 18 findings; the loop terminates here as a GA
+
+### What's in v5.1.0 (from 4.1.0)
+
+**Pipeline architecture:**
+- Asymmetric dual-engine dispatch: Codex × correctness + Codex × adversarial + Gemini × `/ce:review` (3 perspectives per iteration with `defaultEngine: both`).
+- 2-stage flow: Stage 0 Pre-flight → Stage 1 Review (parallel dispatch + merge) → Stage 2 Deliver.
+- PR is the sole review target (file-path mode dropped in rc8). `/arp` with no args auto-detects the open PR for the current branch.
+- Bounded auto-fix loop (1-10 iterations, default 3) with loop-thrash kill switch via composite fingerprints.
+
+**Safety rails (security):**
+- `--include-directories ~/.gemini/commands/ce` (narrow Gemini read scope; not the whole `~/.gemini` tree which includes credentials).
+- `<ref>` and PR number both validated against `^[A-Za-z0-9/_.-]+$` / `^[0-9]+$` before any shell interpolation.
+- Pre-flight working-tree freshness check aborts on uncommitted changes (skipped under `--dry-run`).
+- Codex enforced read-only via verbatim "review only, no edits" contract + `snapshot_git` pre/post each Agent call.
+- Gemini enforced read-only via `mode:report-only` + scoped include-dir + `snapshot_git` post-dispatch diff.
+- Repository rules (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `CONTRIBUTING.md`) loaded from PR base ref via `git show origin/<base>:`, never from the PR working tree (closes prompt-injection vector).
+- PR comment scrubber: API keys, JWTs, PEM key blocks, inline credentials, bearer tokens. Fail-closed.
+- On-disk scrubber for parse-error artifacts (write-time) and rotated session logs (rotation-time).
+- `flock -n` advisory lock on `.arp.lock` (no TOCTOU mtime sniff).
+
+**Reliability rails:**
+- `timeout 1800` (30 min) per Gemini dispatch — fits sequential persona spawn realistic budget.
+- Composite fingerprint `sha1(file:line:severity:normalize(issue):sha1(fix_code[:200]))` — distinct same-line bugs no longer collide. `normalize()` uses `sed -E` for BSD/macOS portability.
+- Parse-error diagnostics: per-source artifacts (`.arp_parse_error_<source>_iter<N>_<epoch>.txt`) + session log diagnostics object. No silent skip.
+- Model cascade: `gemini-3-flash-preview` (default) → (gated `ALLOW_FLASH_FALLBACK=1`) `gemini-3.1-flash-lite-preview`. Pro deployments overridable via userConfig.
+
+**autoCommit semantics:**
+- `git add -u` (tracked-file modifications only). Earlier `git add .` would have swept unrelated untracked files into the autonomous commit.
+
+### Still known-open (deferred to v5.2 / runtime-rewrite)
+
+- Deterministic fingerprint across Claude sessions
+- Integration test harness implementation (spec at `docs/specs/integration-test-harness.md`)
+- LLM-side cost pre-estimate
+- TOCTOU sandboxing for read-only enforcement (`snapshot_git` is rollback-detectable)
+- Scrubber entropy-based gating (current pattern set misses `github_pat_`, `AIza`, `ya29.`, generic high-entropy hex/base64)
+- `<ref>=<PR_number>` passed as `base:<git-ref>` in ce:review dispatch — needs investigation
+- In-memory dispatch buffer scrubbing
+- Pro-deployment headless server-cap recovery (external)
+
+### Tag
+
+`v5.1.0` on `main` after PR #1 merge.
+
 ## 5.0.0-rc15 — 2026-04-15
 
 Applies 7 actionable findings from the rc14 full e2e (Codex × 2 + Gemini × 1 = 18 raw → ~14 distinct after fingerprint merge), plus a user-directed timeout bump.

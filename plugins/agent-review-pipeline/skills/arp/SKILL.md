@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc15
+version: 5.1.0
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** Release candidate (rc15) — applies 7 actionable findings from rc14's full e2e (Codex × 2 + Gemini × 1 = 18 raw → ~14 distinct after merge): repo-rules-injection (CRIT, base-branch fetch), PR number shell-injection guard, autoCommit `git add .` → `git add -u`, fallback model name sweep, fork sequential/parallel contradiction (fork commit `917a6f2`), normalize() BSD `sed -E`, and the user-directed `timeout 600 → 1800` bump. See CHANGELOG.
+> **Status:** v5.1.0 — first GA after 15 rc cycles in one day (2026-04-15). E2E gate passed on rc13 with first successful Gemini findings JSON delivery; rc14-rc15 dogfood loop applied 7 of 18 self-surfaced findings. Pipeline is now provably end-to-end on both engines with fork-side sequential persona spawn (`compound-engineering-plugin@917a6f2`) + ARP-side `gemini-3-flash-preview` default + 30-minute timeout. Codex 2/2 + Gemini 1/1 dispatch reliability validated. See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
