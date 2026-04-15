@@ -1,5 +1,24 @@
 # Changelog
 
+## 5.2.0-rc6 — 2026-04-15
+
+Caught during rc5's own dispatch attempt (the first /arp run after reinstalling rc5 to the plugin cache). The skill loader substituted `$0` → `--dry-run`, `$1` → `3`, `$2` → empty inside the rc5 EXT_SUMMARY awk block. Rendered code was syntactically broken (`split(--dry-run,a,"/")`, `printf "%s(%d) ",,3`), and `EXT_SUMMARY` would have been empty on every dispatch — meaning rc5's ARP-side hallucination mitigation layer did literally nothing, on top of being a broken shell snippet.
+
+### Fixed (HIGH)
+
+- **rc5 EXT_SUMMARY derivation used awk positional fields (`$0`, `$1`, `$2`).** The Claude Code skill loader substitutes those tokens with the /arp CLI args before the snippet reaches bash, so awk never saw `$0 = whole record`; it saw `--dry-run` as a bareword and errored silently inside a subshell that swallowed stderr. rc6 rewrites the block in pure bash parameter expansion (`${f##*.}` to strip everything up to the last dot, `${e,,}` to lowercase) with named loop variables (`_f`, `_e`, `_cnt`, `_ext`) that the loader leaves alone. No awk involved. Smoke-tested against the current feat/rc16 diff: produces `md(4) json(2) gitignore(1)` exactly as rc5 intended.
+
+### Not affected
+
+- The fork-side skill-name allowlist guard at `compound-engineering-plugin/plugins/compound-engineering/skills/ce-review/SKILL.md` Stage 4 was never affected by this bug — it's loaded into Gemini CLI, not Claude Code, so the Claude Code arg-substitution mechanism doesn't reach it. That mitigation layer continues to work as intended and is in effect at `~/.gemini/skills/ce-review/SKILL.md`.
+- rc4's HIGH fixes (GraphQL pagination awareness + sentinel fail-closed) and the cleanup glob fix are in different code paths and did not use positional awk fields. They remain correct.
+
+### Lesson
+
+Templating bugs are a recurring theme of the rc ladder: rc2 had a pipe-binding issue that silently emptied PR context to `{}`; rc5 had a skill-loader arg-substitution issue that silently emptied EXT_SUMMARY. In both cases a subshell + stderr-swallowing pattern (`$(... 2>/dev/null || ...)`) meant the broken form produced a defensible-looking empty value rather than a hard error. The fix shape is always the same: stop using constructs that let silent failures past. For rc6 specifically, the lesson is that ANY shell code shipped inside a Claude Code skill must avoid positional-arg-shaped tokens (`$0`, `$1`, `$2`, etc.), even inside nested quoted strings — the loader doesn't parse the bash, it does a textual substitution.
+
+The compound-engineering loop caught this one on the first dispatch attempt post-install, which is as early as the feedback cycle allows. The test surface worked even though the feature under test was broken; that's the loop functioning correctly.
+
 ## 5.2.0-rc5 — 2026-04-15
 
 rc3 observed a Gemini flash-tier orchestrator hallucination (nonexistent `generalist` skill name; hung for ~10 min wall before manual kill with 2333 bytes of output and no findings JSON). rc4 pushed the planned next dispatch with Pro tier as the fallback, but the user (correctly) asked why we're treating a symptom instead of a root cause. rc5 addresses the root cause in two complementary layers.

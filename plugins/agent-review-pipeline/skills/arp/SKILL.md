@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.2.0-rc5
+version: 5.2.0-rc6
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Fetches PR conversation context (comments, reviews, unresolved threads) for cross-iteration continuity. Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** v5.2.0-rc5 — mitigates the rc3 Gemini flash-tier orchestrator hallucination (a nonexistent `generalist` skill name, hung for 10 min wall before kill) by (a) pre-computing a file-extension summary from the PR diff and injecting it into the Gemini prompt body so the orchestrator doesn't need to scan the diff twice to decide which stack-specific personas apply, reducing the cognitive load that drove the hallucination; and (b) a complementary fork-side edit to `compound-engineering-plugin/plugins/compound-engineering/skills/ce-review/SKILL.md` adding a flat skill-name allowlist guard as the first subsection of Stage 4 with explicit "if the name is not on the list, STOP — you have hallucinated it" framing. Both changes are additive: weaker orchestrator models get a narrower selection problem and a hallucination safety net; stronger models pay ~0 overhead from the extra prompt lines. rc4's two HIGH fixes (GraphQL pagination awareness + sentinel fail-closed) and the cleanup glob fix remain. See CHANGELOG for the full rc1→rc5 trail.
+> **Status:** v5.2.0-rc6 — fixes rc5's silently-broken EXT_SUMMARY derivation. rc5 shipped the hint-injection feature using `awk '{... $0 ... $1 ... $2 ...}'`, but the Claude Code skill loader substitutes `$0`/`$1`/`$2` with `/arp`'s CLI args before the snippet executes, turning the awk body into syntactically broken code and leaving `EXT_SUMMARY` empty on every dispatch. rc6 rewrites the block with pure bash parameter expansion (`${f##*.}`, named loop vars `_f`/`_e`/`_cnt`/`_ext`) so nothing looks like a positional arg to the loader. Smoke-tested against the current PR diff: produces `md(4) json(2) gitignore(1)` as expected. rc5's other mitigation layer (the fork-side skill-name allowlist guard at `compound-engineering-plugin/ce-review/SKILL.md` Stage 4) was never affected by this bug and remains in effect. rc4's HIGH fixes (pagination awareness + sentinel fail-closed) and cleanup glob fix also remain. See CHANGELOG for the full rc1→rc6 trail.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -345,10 +345,20 @@ Per-model dispatch uses `timeout 1800` (30 min) — accommodates sequential pers
 **Domain hint (rc5 — reduce orchestrator cognitive load).** Before writing the prompt body, compute a file-extension summary from the PR diff so Gemini's orchestrator doesn't have to scan the diff twice to decide which stack-specific personas apply. Flash-tier orchestrators have been observed hallucinating skill names (`generalist` on the rc3 diff) under the cognitive load of doing full 17-persona selection reasoning against a dense diff from scratch. Pre-computing the extension summary narrows the selection problem to the actually-relevant subset before the model starts reasoning, which complements the fork-side allowlist guard (ce-review SKILL.md's Stage 4 "Skill name allowlist").
 
 ```bash
-EXT_SUMMARY=$(git diff --name-only "origin/$PR_BASE...HEAD" 2>/dev/null \
-  | awk 'NF { n=split($0,a,"/"); f=a[n];
-              if (match(f,/\.[^.]+$/)) print tolower(substr(f,RSTART+1)); else print "noext" }' \
-  | sort | uniq -c | sort -rn | awk '{printf "%s(%d) ",$2,$1}')
+# rc6: pure bash param expansion — no awk positional fields ($0/$1/$2),
+# because the Claude Code skill loader substitutes those tokens with the
+# /arp CLI args before the snippet executes (rc5 shipped the awk form
+# and silently produced empty EXT_SUMMARY on every dispatch).
+EXT_SUMMARY=$(
+  git diff --name-only "origin/$PR_BASE...HEAD" 2>/dev/null \
+    | while read -r _f; do
+        _e="${_f##*.}"
+        [[ "$_e" == "$_f" ]] && _e="noext"
+        printf '%s\n' "${_e,,}"
+      done \
+    | sort | uniq -c | sort -rn \
+    | while read -r _cnt _ext; do printf '%s(%d) ' "$_ext" "$_cnt"; done
+)
 EXT_SUMMARY="${EXT_SUMMARY:-unknown}"
 ```
 
