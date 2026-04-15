@@ -102,7 +102,7 @@ Or just ask Claude: *"Review PR 42"* / *"Check this before commit"*.
 | `maxIterations` | `3` | Auto-fix retry limit. Range 1-10. |
 | `failOnError` | `false` | Abort on stage failure instead of escalating |
 | `defaultEngine` | `"both"` | `both`, `codex`, `gemini` |
-| `geminiModel` | `"gemini-2.5-pro"` | Passed to `gemini -m`. Default is 2.5-pro (not 3.1-pro-preview) because rc12 found the preview deployment's server capacity saturates when ce:review spawns 6+ personas in parallel. 2.5-pro has a larger headless server-cap pool. Override to `"gemini-3.1-pro-preview"` if your account has reliable preview-deployment access. Cascade on 429: `<geminiModel>` → (gated `ALLOW_FLASH_FALLBACK=1`) `gemini-2.5-flash`. |
+| `geminiModel` | `"gemini-3-flash-preview"` | Passed to `gemini -m`. Default is 3-flash-preview because rc13 e2e proved this Gemini-3 Flash deployment + the fork's sequential persona spawn delivers real findings JSON within the 10-minute headless budget — Pro deployments (`gemini-3.1-pro-preview`, `gemini-2.5-pro`) fail with `MODEL_CAPACITY_EXHAUSTED` 429s. Override to `gemini-3.1-pro-preview` when Pro server-cap recovers and you want max quality. Cascade on 429: `<geminiModel>` → (gated `ALLOW_FLASH_FALLBACK=1`) `gemini-3.1-flash-lite-preview`. |
 | `autoCommit` | `false` | Auto-commit fixes. **Off by default** — review first. |
 | `postPrComment` | `false` | Auto-post summary via `gh pr comment`. **Off by default**. |
 | `dryRun` | `false` | Run review without Edit / commit / PR comment |

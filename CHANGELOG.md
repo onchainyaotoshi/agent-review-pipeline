@@ -1,5 +1,43 @@
 # Changelog
 
+## 5.0.0-rc13 — 2026-04-15
+
+**🎯 First end-to-end Gemini-side validation passing.** All four prior Gemini dispatches today (rc7, rc11, rc12-pro, rc12-flash) failed to produce findings JSON — Pro deployments saturated, parallel persona spawn multiplied API call demand beyond available server capacity. rc13 closes the gate by combining two fixes:
+
+### Fork-side: sequential persona spawn
+
+Patched `compound-engineering-plugin/plugins/compound-engineering/skills/ce-review/SKILL.md` (commit `adc218e` on `fix/gemini-ce-review-dispatch`): default Gemini CLI dispatch is now sequential, not parallel. Each persona activates in order (always-on first, then conditionals), one API call at a time. Trades ~3-5× wall time for fitting within available headless server slots. Parallel becomes opt-in for environments with reserved capacity.
+
+### ARP-side: default model switched to `gemini-3-flash-preview`
+
+`plugin.json` userConfig.geminiModel default: `gemini-2.5-pro` → `gemini-3-flash-preview`. Pro deployments (`gemini-3.1-pro-preview`, `gemini-2.5-pro`) still 429-saturated as of 2026-04-15. Flash bucket (where `gemini-3-flash-preview` lives) has independent server-cap pool with headroom. Gemini-3 family quality, Flash tier latency.
+
+Cascade also updated: `gemini-3-flash-preview` → (gated `ALLOW_FLASH_FALLBACK=1`) `gemini-3.1-flash-lite-preview` (Flash-Lite bucket — separate quota again).
+
+### Empirical evidence (the gate)
+
+```
+Dispatch:  gemini-3-flash-preview + sequential persona spawn
+Duration:  ~6 minutes (< timeout 600)
+Exit:      0
+Output:    4395 bytes, valid JSON array
+Findings:  5 (1 high, 2 medium, 2 low)
+```
+
+The findings themselves were substantive — fingerprint formula not documented in rc12 CHANGELOG, geminiModel description out of sync, scrubber regex `{6,}` minimum too lax, `normalize()` newline handling, and a meta-finding that rc12 shipped major safety subsystems without integration tests.
+
+### Per memory `feedback-merge-after-e2e-pass.md`
+
+Gate **PASSES**. Pipeline mechanics fully proven (Codex 2/2 + Gemini 1/1) with substantive findings JSON from both engines. rc13 is mergeable to main pending CHANGELOG/README polish and tag.
+
+### Still known-open
+
+- Deterministic fingerprint across Claude sessions
+- LLM-side cost pre-estimate
+- In-memory dispatch buffer scrubbing
+- Integration test harness implementation (spec at `docs/specs/integration-test-harness.md`)
+- Pro-deployment server-cap (external — Google's infrastructure; mitigated by Flash default + sequential spawn)
+
 ## 5.0.0-rc12 — 2026-04-15
 
 Switches default `geminiModel` from `gemini-3.1-pro-preview` to `gemini-2.5-pro` based on a real e2e debug session: `gemini-3.1-pro-preview` headless deployment cannot serve `/ce:review` parallel persona spawns under current load.
