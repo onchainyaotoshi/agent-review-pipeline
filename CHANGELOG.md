@@ -1,5 +1,30 @@
 # Changelog
 
+## 5.0.0-rc6 — 2026-04-15
+
+Closes the enforced-Codex-read-only blocker. Continues the same-day rc cycle while quota recovers.
+
+### Background
+
+`codex-rescue`'s own agent definition states: *"Default to a write-capable Codex run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits."* rc1-rc5 relied solely on a "READ-ONLY review. Do not edit any file" prompt prefix — defensible but not provably enforced, since the agent could choose to interpret the request weakly and still pass `--write`.
+
+### Added
+
+- **Codex shared read-only contract.** Both Codex dispatches (correctness + adversarial) now share a verbatim-aligned read-only prefix using `codex-rescue`'s own recognition phrasing (*"review only, no edits"* + explicit *"do not pass `--write` to `codex-companion`"*). This matches the agent's selection-guidance trigger so the default `--write` flag is skipped.
+- **Codex post-dispatch snapshot diff.** The same `snapshot_git` helper used for Gemini (rc3) is now wrapped pre/post each Codex Agent call. Divergence aborts with source-attributed message *"Codex write detected despite read-only contract — aborting"* (exit 2). Per-dispatch wrapping means the violator (correctness vs adversarial) is identifiable from the abort message.
+
+### Result
+
+Codex enforced read-only is now defended at two independent layers — prompt-level (matches agent's own recognition phrasing) plus repo-state snapshot diff (catches violations regardless of prompt compliance). Removed from the open-blocker list.
+
+### Still known-open
+
+- Deterministic fingerprint across Claude sessions (LLM-dependent `normalize(issue)` text)
+- LLM-side cost pre-estimate
+- On-disk scrubbing for session logs and parse-error artifacts
+- Integration test harness implementation (spec at `docs/specs/integration-test-harness.md`)
+- `/ce:review` `-p` headless reliability (external — Gemini CLI / quota)
+
 ## 5.0.0-rc5 — 2026-04-15
 
 Closes the PR-comment redaction blocker. Continues the same-day rc cycle while quota recovers.

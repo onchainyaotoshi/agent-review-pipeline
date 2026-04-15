@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.0.0-rc5
+version: 5.0.0-rc6
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Dedups by confidence, auto-fixes inline. Supports dry-run.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number | files]"
 ---
 
-> **Status:** Release candidate (rc5). rc2 addressed 3 security issues from PR #1's first e2e run; rc3 refined the post-dispatch write-check and documented the empirically-dead flash fallback path; rc4 upgraded parse-error handling and shipped the integration-test-harness spec; rc5 adds explicit PR-comment redaction (API keys, JWTs, PEM key blocks, inline credentials, bearer tokens) with fail-closed behavior. See CHANGELOG.
+> **Status:** Release candidate (rc6). rc2 addressed 3 security issues from PR #1's first e2e run; rc3 refined the post-dispatch write-check; rc4 upgraded parse-error handling and shipped the integration-test-harness spec; rc5 added PR-comment redaction; rc6 closes the enforced-Codex-read-only blocker with a two-layer defence (verbatim read-only contract + snapshot_git pre/post each Codex Agent call). See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -135,13 +135,21 @@ Write prompt body to `.arp_stage_prompt.md`. The shared suffix is the JSON outpu
 > Respond with ONLY a JSON array. No markdown fences. No prose before or after.
 > Schema: `[{"file":"...","line":12,"severity":"low|medium|high|critical","confidence":0.85,"issue":"...","fix_code":"..."}]`
 
+**Codex shared read-only contract** (prepended to both Codex dispatches):
+
+> "**Review only, no edits.** This is a read-only review pass — output findings only, do not Edit, Write, or otherwise modify any file. **Do not pass `--write` to `codex-companion`**; the upstream `codex-rescue` agent defaults to write-capable but this dispatch is explicitly the review/diagnosis case it's instructed to recognize as read-only. If you believe a fix is needed, emit it as `fix_code` text inside the finding JSON — the orchestrator will apply it via the `Edit` tool itself."
+
+This phrasing is verbatim-aligned with the recognition triggers in `codex-rescue`'s own selection guidance (`"asks for read-only behavior or only wants review, diagnosis, or research without edits"`), so the agent skips its default `--write` flag.
+
 **Dispatch 1 — Codex × Correctness framing** (Agent tool → `codex:codex-rescue`):
 
-Prompt includes: "READ-ONLY review. Do not edit any file — output findings only. You are a senior code reviewer. Find logic errors, null derefs, type mismatches, missing error handling, and broken callers. If a changed function signature / exported API / schema is found in the diff, grep the repo for call sites NOT in the diff and verify each still works. Emit a finding per broken caller with `fix_code`." Append JSON schema suffix.
+Prompt: shared read-only contract + "You are a senior code reviewer. Find logic errors, null derefs, type mismatches, missing error handling, and broken callers. If a changed function signature / exported API / schema is found in the diff, grep the repo for call sites NOT in the diff and verify each still works. Emit a finding per broken caller with `fix_code`." Append JSON schema suffix.
 
 **Dispatch 2 — Codex × Adversarial framing** (Agent tool → `codex:codex-rescue`):
 
-Prompt includes: "READ-ONLY review. Do not edit any file — output findings only. You are a red-team attacker trying to break this code. Find edge cases, race conditions, off-by-one bugs, security bypasses (injection, path traversal, auth skip, integer overflow), data loss scenarios, and concurrency hazards. Assume every input can be malicious. Emit a finding with `fix_code` per vulnerability." Append JSON schema suffix.
+Prompt: shared read-only contract + "You are a red-team attacker trying to break this code. Find edge cases, race conditions, off-by-one bugs, security bypasses (injection, path traversal, auth skip, integer overflow), data loss scenarios, and concurrency hazards. Assume every input can be malicious. Emit a finding with `fix_code` per vulnerability." Append JSON schema suffix.
+
+**Codex post-dispatch write check.** Defense in depth — even with the read-only contract above, snapshot the repo state around each Codex Agent call using the same `snapshot_git` helper used for Gemini (see Dispatch 3 wrapper). If the snapshot diverges, the dispatch wrote despite instructions: abort the pipeline with *"Codex write detected despite read-only contract — aborting"* and exit 2. The check is per-dispatch (correctness and adversarial wrapped independently) so a violator is identifiable from the source attribution.
 
 **Dispatch 3 — Gemini × /ce:review** (Bash tool):
 
@@ -255,7 +263,7 @@ GIT_AFTER=$(snapshot_git)
 - `--dry-run` disables all state-changing actions (Edit, commit, PR comment).
 - Dependency precheck fails fast before any engine is dispatched.
 - Parse errors persisted to `.arp_parse_error_<source>_iter<N>_<epoch>.txt` and surfaced per-source in the Deliver summary. Not fatal, but no longer silent-skipped.
-- Codex dispatches prefix prompt with **"READ-ONLY review. Do not edit any file"** to prevent Codex from auto-editing in parallel with ARP orchestrator.
+- Codex dispatches enforced read-only via **two layers**: (1) shared read-only contract prompt prefix using verbatim recognition phrasing from `codex-rescue`'s selection guidance ("review only, no edits") so the agent skips its default `--write` flag and explicit instruction not to pass `--write` to `codex-companion`; (2) `snapshot_git` pre/post each Codex Agent call — divergence aborts the pipeline with source-attributed error message.
 - Gemini read-only enforced via **three-layer defence**: `mode:report-only` prompt flag, `--include-directories` scoped to `~/.gemini/commands/ce` only (not `~/.gemini`), and post-dispatch snapshot diff (tracked-file changes + new non-ignored files) that aborts on any modification. Gitignored runtime artifacts are deliberately excluded so legitimate state cannot false-positive the check. `--approval-mode yolo` is needed because `plan` blocks the shell access `/ce:review` requires.
 - PR comment body scrubbed for API keys, JWT-shaped tokens, PEM private-key blocks, inline credential assignments, and bearer tokens before posting (see Step 2.5). Fail-closed: scrubber error or unreplaceable match aborts the post rather than publishing raw.
 - `<ref>` validated against `^[A-Za-z0-9/_.-]+$` before interpolation — blocks shell/prompt injection through attacker-controlled branch or PR refs.
