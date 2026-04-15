@@ -5,7 +5,7 @@ description: Autonomous dual-engine code review pipeline. Asymmetric dispatch �
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** v5.2.0-rc1 — adds PR conversation context fetching (Step 0.8). A second `/arp` run on a long-lived PR now reads existing maintainer comments + unresolved review threads + prior reviews and instructs engines to suppress already-dismissed findings + lower-confidence already-raised-but-unresolved findings. Closes the cross-iteration continuity gap identified during the v5.1.0 dogfood. See CHANGELOG.
+> **Status:** v5.2.0-rc1 — closes two cross-iteration / cross-project context gaps surfaced after v5.1.0 GA: (1) Step 0.6 now reads `.claude/rules/*.md`, `.claude/CLAUDE.md`, and `docs/CONVENTIONS*.md` from the PR base ref in addition to the original four rules files (discovery: `camis_api_native` keeps 7 rules under `.claude/rules/` — without the broader glob ARP missed ~70% of project context); (2) Step 0.8 fetches PR conversation context (title, body, comments, reviews, unresolved review threads) so engines suppress findings already dismissed by maintainers and lower-confidence findings already raised but unresolved. Worktree behavior also documented (verified compatible). See CHANGELOG.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -149,17 +149,32 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
    ```
 
    This is a fail-closed pre-flight gate. The check covers both unstaged (`git diff --quiet HEAD`) and staged-but-not-committed (`git diff --cached --quiet`) changes. Untracked files are NOT a trigger — they're irrelevant to the diff dispatch.
-6. **Repo rules from trusted base, not PR head (rc15 — fixes prompt-injection vector).** The PR checkout is attacker-controlled — a malicious PR can modify `AGENTS.md` / `CLAUDE.md` / `.cursorrules` / `CONTRIBUTING.md` to inject instructions that suppress findings or steer auto-fix. Resolve the PR's base ref first, then read each rules file from the base copy:
+6. **Repo rules from trusted base, not PR head (rc15 — fixes prompt-injection vector; expanded in 5.2.0-rc1 — broader rules surface).** The PR checkout is attacker-controlled — a malicious PR can modify any of the rules files to inject instructions that suppress findings or steer auto-fix. Resolve the PR's base ref first, then read each rules file from the base copy. The rules surface intentionally covers multiple conventions because real projects use different ones (e.g., `camis_api_native` keeps most rules under `.claude/rules/` while only stubs in `AGENTS.md` / `CLAUDE.md` — without the broader glob, ARP would miss ~70% of project context).
 
    ```bash
    PR_BASE=$(gh pr view "$PR_NUMBER" --json baseRefName -q .baseRefName)
    git fetch origin "$PR_BASE" --quiet
+   : > .arp_repository_rules.md
+
+   # Top-level rules files — single paths.
    for rules in AGENTS.md CLAUDE.md .cursorrules CONTRIBUTING.md; do
      git show "origin/$PR_BASE:$rules" 2>/dev/null >> .arp_repository_rules.md || true
    done
+
+   # Globbed rules — anything tracked under .claude/rules/, .claude/CLAUDE.md,
+   # or top-level docs/CONVENTIONS*.md. Use ls-tree (not the working tree)
+   # so we only see paths committed on the base ref.
+   git ls-tree -r --name-only "origin/$PR_BASE" \
+     | grep -E '^(\.claude/(rules/.*\.md|CLAUDE\.md)|docs/CONVENTIONS.*\.md)$' \
+     | while IFS= read -r path; do
+         printf '\n\n## %s\n\n' "$path" >> .arp_repository_rules.md
+         git show "origin/$PR_BASE:$path" >> .arp_repository_rules.md
+       done
    ```
 
    Inject `.arp_repository_rules.md` contents into the `<repository_rules>` block of every engine prompt. If a rules file doesn't exist on the base ref, omit it silently. Never inject the working-tree copy.
+
+   **Worktree note (5.2.0-rc1):** Projects that use `git worktree` (e.g., `camis_api_native` keeps worktrees under `.claude/worktrees/`) will run ARP from a worktree directory. Each worktree has its own working tree but shares the parent repo's `.git/objects`. The `gh pr view` and `git show origin/<base>:` calls work identically from any worktree. The flock advisory lock at `.arp.lock` is per-worktree path (each worktree is a separate cwd) — two `/arp` invocations in two worktrees of the same repo will not collide on the lock. This is intentional: each worktree reviews its own branch independently. Operators running concurrent `/arp` with `autoCommit=true` across worktrees should be aware that pushes go to whichever PR each worktree's branch is associated with — there is no cross-worktree coordination.
 7. Resolve PR diff via `gh pr diff <n>` (where `<n>` was passed or auto-detected in step 1).
 8. **Fetch PR conversation context (rc16 — `5.2.0-rc1`)** so the engines have continuity across iterations of a long-lived PR. A second `/arp` run on a PR that already has comments should not re-surface findings the maintainer has already discussed and dismissed.
 

@@ -2,10 +2,11 @@
 
 ## 5.2.0-rc1 — 2026-04-15
 
-Adds PR conversation context fetching. Each `/arp` run now reads existing PR comments, reviews, and unresolved review threads before dispatching engines, and instructs them to suppress findings the maintainer has already discussed. Closes the cross-iteration continuity gap surfaced by user trace-through during the v5.1.0 dogfood: previously a second `/arp` on a long-lived PR re-surfaced findings that maintainers had already dismissed in earlier rounds, because ARP only fetched the diff and had zero context about prior conversation.
+Two cross-iteration / cross-project context gaps closed in one release. Surfaced by inspecting `camis_api_native` (the actual downstream consumer) plus user trace-through during the v5.1.0 dogfood.
 
 ### Added
 
+- **Step 0.6 — Expanded repo-rules glob.** Previously only read `AGENTS.md` / `CLAUDE.md` / `.cursorrules` / `CONTRIBUTING.md` from the PR base ref. Now also reads `.claude/rules/*.md`, `.claude/CLAUDE.md`, and `docs/CONVENTIONS*.md` (also via `git show origin/<base>:`, never working-tree). Discovery: `camis_api_native` keeps 7 rule files under `.claude/rules/` (`builder-components.md`, `deploy.md`, `gotcha.md`, `session-start.md`, …) — without the broader glob, ARP would miss ~70% of that project's context, leading to findings that violate already-documented gotchas and auto-fixes that suggest forbidden patterns.
 - **Step 0.8 — Fetch PR conversation context.** New pre-dispatch step calls `gh pr view <n> --json title,body,author,comments,reviews,reviewThreads > .arp_pr_context.json`. Process before injection:
   - Always include title, body, author.
   - Top-level comments truncated to 800 chars each.
@@ -15,6 +16,10 @@ Adds PR conversation context fetching. Each `/arp` run now reads existing PR com
 - **`<pr_context>` block injected into engine prompts.** Separate from `<diff>` so engines can weight differently. Includes title / body / comments / reviews / unresolved_threads sub-elements.
 - **Engine instructions for the new context block:** Treat `<pr_context>` as authoritative maintainer signal. If a finding was already raised and explicitly dismissed → suppress. If raised and still unresolved → lower confidence by 0.10 and tag issue text with `(also raised: <author>)`.
 - **`.gitignore`** updated for `.arp_pr_context.json` and `.arp_repository_rules.md` (the latter was already present in working tree but missed in earlier `.gitignore` add).
+
+### Documented (no behavior change)
+
+- **Worktree-awareness note in Step 0.6.** `camis_api_native` keeps worktrees under `.claude/worktrees/`. Verified: `gh pr view`, `git show origin/<base>:`, the working-tree freshness check, and `snapshot_git` all behave correctly when run from a worktree directory. The `.arp.lock` flock is per-worktree path (each worktree is a separate cwd), so two concurrent `/arp` invocations in two worktrees of the same repo do NOT collide on the lock — this is intentional, each worktree reviews its own branch independently. Operators running `autoCommit=true` concurrently across worktrees should know that pushes go to whichever PR each worktree's branch tracks.
 
 ### Why minor bump (5.1.0 → 5.2.0)
 
