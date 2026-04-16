@@ -153,7 +153,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 1. **Flag parsing:** recognize `--dry-run` (or `-d`), `-n N` / `--max-iterations N` (clamp to 1-10), `codex|gemini|both`, PR number. If no PR number is passed, auto-detect the open PR for the current branch via `gh pr list --head "$CURRENT_BRANCH" --json number,title --jq 'length'`. If count is 0 → abort with *"No PR found for current branch — push and open a PR first, or pass a PR number explicitly"*. If count > 1 → abort with *"Multiple open PRs found for this branch: PR #<n1> (<title1>), PR #<n2> (<title2>) — pass a PR number explicitly to select which one to review"*. If count == 1 → use that PR number. Print a clear header before starting review:
 
 ```
-===== ARP v6.2.0 | PR #<n>: <title> =====
+===== ARP v6.3.2 | PR #<n>: <title> =====
 Mode: dry-run (preview only, no edits)
 Iterations: max <N>
 Quality Gate: Phase A (sem dedup) | Phase B (classifier) | Phase C (rules)
