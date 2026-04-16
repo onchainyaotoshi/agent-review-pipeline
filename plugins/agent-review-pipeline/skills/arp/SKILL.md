@@ -1,6 +1,6 @@
 ---
 name: arp
-version: 6.3.0
+version: 6.3.2
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Fetches PR conversation context (comments, reviews, unresolved threads) for cross-iteration continuity. Dedups by confidence, auto-fixes inline. Supports dry-run. Pinned to Gemini Flash (gemini-3-flash-preview) — empirically proven cost-effective over Pro.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
