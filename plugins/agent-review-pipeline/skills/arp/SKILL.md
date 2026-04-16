@@ -545,18 +545,94 @@ GIT_AFTER=$(snapshot_git)
 5. Drop findings with `confidence < 0.60`.
 6. Update `agreement` counters (based on `produced_by` — engine identity, not source label).
 
+7. **Quality Gate Phase A — Semantic Dedup (v5.6.0).** After fingerprint-based merge, run one Haiku Agent call to group findings that describe the same underlying issue but differ in wording, severity label, or exact file/line.
+
+   **Gate check:** if `qualityGate.semanticDedup` is `false`, skip.
+
+   **Write findings for classification:**
+
+   ```bash
+   MERGED_COUNT=$(jq '.findings | length' .arp_session_log.json)
+   if [[ "$MERGED_COUNT" -gt 1 ]]; then
+     jq -c '{findings: [.findings[] | {id: (.file + ":" + (.line|tostring) + ":" + (.severity|tostring)), file, line, severity, issue, confidence, produced_by, source}]}' \
+       .arp_session_log.json > .arp_dedup_input.json
+   fi
+   ```
+
+   Invoke Agent tool with `model: "haiku"`, description "Semantic dedup ARP findings", prompt:
+
+   > Read `.arp_dedup_input.json`. You are a code review deduplication engine. Group findings that describe the same underlying issue — even if wording, severity label, or file/line differs slightly.
+   >
+   > Output JSON only — no markdown fences, no prose:
+   > `{"groups": [["id1","id3"], ["id2"], ...]}`
+   >
+   > Each group = one underlying issue. Singleton = unique finding. Every finding ID must appear exactly once.
+
+   **Parse + merge:**
+
+   ```bash
+   if [[ "$MERGED_COUNT" -gt 1 ]]; then
+     GROUPS_JSON=$AGENT_RESPONSE
+     PHASE_A_FALLBACK=false
+
+     # Validate groups structure
+     if ! echo "$GROUPS_JSON" | jq -e '.groups | type == "array"' >/dev/null 2>&1; then
+       PHASE_A_FALLBACK=true
+     fi
+
+     if [[ "$PHASE_A_FALLBACK" != "true" ]]; then
+       # For each group with >1 finding, merge into single finding
+       echo "$GROUPS_JSON" | jq -r '.groups[] | select(length > 1) | @json' | while read -r group; do
+         IDS=$(echo "$group" | jq -r '.[]')
+         # Pick finding with highest confidence as base
+         BASE_ID=$(echo "$IDS" | while read -r id; do
+           jq -r --arg id "$id" '.findings[] | select((.file+":"+(.line|tostring)+":"+(.severity|tostring)) == $id) | "\(.confidence)\t\(.file):\(.line):\(.severity)"' .arp_session_log.json
+         done | sort -rn | head -1 | cut -f2-)
+
+         # Union produced_by and source, set confidence = max + 0.15*(group_size-1), cap 1.0
+         GROUP_SIZE=$(echo "$group" | jq 'length')
+         CONF_ADD=$(jq -n --argjson n "$GROUP_SIZE" '$n - 1 | . * 0.15')
+         # Update session log: merge group into BASE_ID
+         # (Detailed jq merge logic — pick longest issue text, highest severity,
+         #  union produced_by and source arrays)
+       done
+     fi
+   fi
+   ```
+
+   **Merge rules per group:**
+   - Description: pick the finding with the longest `issue` text.
+   - Severity: pick highest (`critical > high > medium > low`).
+   - Confidence: `max(individual) + 0.15 × (group_size - 1)`, capped at 1.0.
+   - `produced_by`: union of all engines in group.
+   - `source`: union of all dispatch origins in group.
+   - Remove merged findings from the group (keep only the merged representative).
+   - Re-count agreement after merge.
+
+   **Fallback:** if Agent call fails or JSON is invalid, keep existing fingerprint-based results unchanged (`PHASE_A_FALLBACK=true`).
+
+   **Session log telemetry:** add to `quality_gate.phase_a`:
+   ```json
+   {
+     "input_count": <MERGED_COUNT>,
+     "groups_found": <count of groups with >1 finding>,
+     "deduped_count": <findings remaining after merge>,
+     "fallback": false
+   }
+   ```
+
 **Loop-Thrash Kill Switch:**
-7. Before applying fixes, for each finding check if its `fingerprint` is in `fingerprints_seen`. If yes, the prior fix did not resolve it. Mark `ESCALATED`, skip auto-fix, append to PR report as "needs human review", do not count against `maxIterations`.
+8. Before applying fixes, for each finding check if its `fingerprint` is in `fingerprints_seen`. If yes, the prior fix did not resolve it. Mark `ESCALATED`, skip auto-fix, append to PR report as "needs human review", do not count against `maxIterations`.
 
 **Auto-Fix (skip if `dryRun: true`):**
-8. Apply `fix_code` via Edit tool. Mark `applied: true` and add fingerprint to `fingerprints_seen`.
+9. Apply `fix_code` via Edit tool. Mark `applied: true` and add fingerprint to `fingerprints_seen`.
 
 **Loop:**
-9. Re-run Step 1 until no non-escalated findings remain OR `iteration == maxIterations` (clamped to 1-10).
-10. **`failOnError` branch:** when `iteration == maxIterations` and non-escalated findings remain:
+10. Re-run Step 1 until no non-escalated findings remain OR `iteration == maxIterations` (clamped to 1-10).
+11. **`failOnError` branch:** when `iteration == maxIterations` and non-escalated findings remain:
     - If `failOnError: true` → abort pipeline with non-zero exit, print remaining findings, do NOT proceed to Step 2. `autoCommit` and `postPrComment` never fire.
     - If `failOnError: false` (default) → promote remaining findings to `ESCALATED` status, proceed to Step 2, summary flags the run as partially unresolved.
-11. If `dryRun: true`, run one iteration only and print the findings report. Do not loop, do not auto-fix.
+12. If `dryRun: true`, run one iteration only and print the findings report. Do not loop, do not auto-fix.
 
 ### Step 2: Deliver
 1. Compile summary from `.arp_session_log.json`:
