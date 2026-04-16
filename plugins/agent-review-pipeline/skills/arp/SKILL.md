@@ -88,7 +88,29 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
       "raw_sha1": "<sha1>",
       "first_200_chars": "..."
     }
-  ]
+  ],
+  "quality_gate": {
+    "phase_a": {
+      "input_count": 12,
+      "groups_found": 4,
+      "deduped_count": 8,
+      "fallback": false
+    },
+    "phase_b": {
+      "input_count": 8,
+      "dropped": 3,
+      "severity_overrides": 2,
+      "dropped_ids": ["finding_5", "finding_9", "finding_11"],
+      "fallback": false
+    },
+    "phase_c": {
+      "rules_extracted": true,
+      "suppress_count": 4,
+      "enforce_count": 7,
+      "ignored_count": 3,
+      "fallback_used": false
+    }
+  }
 }
 ```
 
@@ -101,6 +123,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 ```
    ┌────────────────────────────────────────────┐
    │ 0. Context Setup (entire PR)               │
+   │    + Phase C: Enhanced Rules Extraction    │
    └──────────────────┬─────────────────────────┘
                       │
    ┌──────────────────▼─────────────────────────┐
@@ -110,14 +133,17 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
    │    gemini  × /ce:review (compound engin.)   │
    └──────────────────┬─────────────────────────┘
                       │ Merge + Fingerprint
-                      │ multi-source? +0.15 boost (cap 1.0)
+                      │ Phase A: Semantic Dedup (Haiku)
+                      │ Phase B: Classifier (Haiku)
                       │ conf < 0.60? drop
+                      │ real_score < min? drop
                       │ fingerprint reappears? kill switch → escalate
                       │ Auto-fix → loop until PASS or max (cap 10)
                       ▼
    ┌────────────────────────────────────────────┐
    │ 2. Deliver — summary, agreement rate,       │
-   │    optional git commit + gh pr comment      │
+   │    quality gate metrics, optional commit    │
+   │    + gh pr comment                         │
    └────────────────────────────────────────────┘
 ```
 
@@ -707,7 +733,8 @@ GIT_AFTER=$(snapshot_git)
    - **Agreement rate** (aggregate `agreement.rate`)
    - Escalated findings (kill switch triggered)
    - Per-engine attribution (`codex_only`, `gemini_only`, `both`)
-   - Per-source parse-error count with artifact path (e.g. *"gemini:ce-review — 1 parse error, raw at `.arp_parse_error_gemini-ce-review_iter1_*.txt`"*). Do not silent-skip.
+   - Per-source parse-error count with artifact path
+   - **Quality Gate metrics:** Phase A groups found, dedup savings. Phase B dropped count + severity overrides. Phase C suppress/enforce/ignore counts. Display as separate section in summary output. (e.g. *"gemini:ce-review — 1 parse error, raw at `.arp_parse_error_gemini-ce-review_iter1_*.txt`"*). Do not silent-skip.
 2. Print summary to stdout always.
 3. If `dryRun: true`: stop — do not commit, do not post.
 4. If `autoCommit: true`: execute `git add -u` (modifications to tracked files only — NOT `git add .` which would sweep in unrelated untracked files like editor backups, secrets, or developer scratch) and `git commit -m "chore(arp): autonomous review fixes"`. Off by default.
