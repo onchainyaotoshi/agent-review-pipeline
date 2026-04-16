@@ -47,7 +47,7 @@
     "dryRun": {
       "title": "Dry Run",
       "type": "boolean",
-      "default": false,
+      "default": true,
       "description": "If true, run review stages and print findings + proposed fixes without applying any Edit, commit, or PR comment."
     },
     "qualityGateEnabled": {
