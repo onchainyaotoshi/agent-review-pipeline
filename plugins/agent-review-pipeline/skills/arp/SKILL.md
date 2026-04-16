@@ -62,6 +62,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
       "issue": "...",
       "severity": "high",
       "confidence": 0.93,
+      "pre_existing": false,
       "produced_by": ["codex", "gemini"],
       "source": ["codex:correctness", "gemini:ce-review"],
       "fix_code": "...",
@@ -73,6 +74,12 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
     "gemini_only": 1,
     "both": 5,
     "rate": 0.625
+  },
+  "pre_existing_counters": {
+    "codex_only": 1,
+    "gemini_only": 3,
+    "both": 0,
+    "total": 4
   },
   "fingerprints_seen": ["<sha1>", "..."],
   "redactions": {
@@ -458,7 +465,9 @@ Mode: auto-fix (will apply edits, bounded loop)
 Write prompt body to `.arp_stage_prompt.md`. The shared suffix is the JSON output schema:
 
 > Respond with ONLY a JSON array. No markdown fences. No prose before or after.
-> Schema: `[{"file":"...","line":12,"severity":"low|medium|high|critical","confidence":0.85,"issue":"...","fix_code":"..."}]`
+> Schema: `[{"file":"...","line":12,"severity":"low|medium|high|critical","confidence":0.85,"issue":"...","fix_code":"...","pre_existing":false}]`
+>
+> `pre_existing` is **required** — set `true` when the finding points at code that was NOT added or modified by this PR's diff (i.e. the cited `file:line` is outside the diff hunks). Set `false` when the finding lives inside the PR's changes. Findings with `pre_existing: true` are partitioned to a separate "Out of PR scope" list during delivery and do NOT consume auto-fix budget — this is how reviewers flag "I noticed something but it's not this PR's job to fix it" without silently inflating the main findings count.
 
 **Codex shared read-only contract** (prepended to both Codex dispatches):
 
@@ -468,11 +477,11 @@ This phrasing is verbatim-aligned with the recognition triggers in `codex-rescue
 
 **Dispatch 1 — Codex × Correctness framing** (Agent tool → `codex:codex-rescue`):
 
-Prompt: shared read-only contract + "You are a senior code reviewer. Find logic errors, null derefs, type mismatches, missing error handling, and broken callers. If a changed function signature / exported API / schema is found in the diff, grep the repo for call sites NOT in the diff and verify each still works. Emit a finding per broken caller with `fix_code`." Append JSON schema suffix.
+Prompt: shared read-only contract + "You are a senior code reviewer. Find logic errors, null derefs, type mismatches, missing error handling, and broken callers. If a changed function signature / exported API / schema is found in the diff, grep the repo for call sites NOT in the diff and verify each still works. Emit a finding per broken caller with `fix_code`. **For every finding, set `pre_existing: true` when the cited `file:line` is NOT inside this PR's diff hunks (i.e. the issue existed before this PR and the PR does not touch it); set `pre_existing: false` when the finding lives within the PR's added/modified lines. If in doubt, grep `gh pr diff` output to confirm. ARP partitions pre-existing findings to a separate list — do not silently co-mingle them with PR-introduced bugs.**" Append JSON schema suffix.
 
 **Dispatch 2 — Codex × Adversarial framing** (Agent tool → `codex:codex-rescue`):
 
-Prompt: shared read-only contract + "You are a red-team attacker trying to break this code. Find edge cases, race conditions, off-by-one bugs, security bypasses (injection, path traversal, auth skip, integer overflow), data loss scenarios, and concurrency hazards. Assume every input can be malicious. Emit a finding with `fix_code` per vulnerability." Append JSON schema suffix.
+Prompt: shared read-only contract + "You are a red-team attacker trying to break this code. Find edge cases, race conditions, off-by-one bugs, security bypasses (injection, path traversal, auth skip, integer overflow), data loss scenarios, and concurrency hazards. Assume every input can be malicious. Emit a finding with `fix_code` per vulnerability. **Same `pre_existing` contract as correctness framing: true when `file:line` is outside the PR's diff hunks, false when inside. Partitioning happens at delivery — do not blend the two.**" Append JSON schema suffix.
 
 **Codex post-dispatch write check.** Defense in depth — even with the read-only contract above, snapshot the repo state around each Codex Agent call using the same `snapshot_git` helper used for Gemini (see Dispatch 3 wrapper). If the snapshot diverges, the dispatch wrote despite instructions: abort the pipeline with *"Codex write detected despite read-only contract — aborting"* and exit 2. The check is per-dispatch (correctness and adversarial wrapped independently) so a violator is identifiable from the source attribution.
 
@@ -531,7 +540,9 @@ Review emphasis: find what's STILL BROKEN after this PR lands, not what the PR a
 
 After the compound-engineering review, output ONLY a JSON array summarizing all findings. No markdown fences, no prose.
 Map severity: P0→critical, P1→high, P2→medium, P3→low.
-Schema: [{"file":"...","line":12,"severity":"...","confidence":0.85,"issue":"...","fix_code":"..."}]
+Schema: [{"file":"...","line":12,"severity":"...","confidence":0.85,"issue":"...","fix_code":"...","pre_existing":false}]
+
+**pre_existing is required.** The ce-review persona output already carries `pre_existing: boolean` per finding (see `~/.gemini/skills/ce-review/SKILL.md` Stage 4 compact JSON shape). Preserve that flag end-to-end through your Stage 5 merge — do NOT flatten pre-existing findings into the same bucket as PR-introduced findings. Map `pre_existing: true` from persona → `pre_existing: true` in the final array. ARP partitions them at delivery time; losing the flag forces the caller to manually re-triage every run.
 ```
 
 **Dispatch wrapper** (pre- and post-checks enforce read-only):
@@ -591,10 +602,10 @@ GIT_AFTER=$(snapshot_git)
 4. Parse-error artifacts are gitignored (`.arp_parse_error_*` glob added to `.gitignore`) and pruned alongside session logs after 7 days in Step 2 cleanup.
 
 **Merge + Fingerprint:**
-3. For each finding, compute `fingerprint`. Tag with `source` (e.g. `codex:correctness`) and infer `produced_by` from source prefix.
-4. If the same fingerprint surfaces from multiple dispatches, merge into one finding; union `source` and `produced_by`; set `confidence = min(1.0, confidence + 0.15 * (sources - 1))`.
+3. For each finding, compute `fingerprint`. Tag with `source` (e.g. `codex:correctness`) and infer `produced_by` from source prefix. **Note:** `fingerprint` deliberately does NOT include `pre_existing` — if one engine flags a finding as pre-existing and another doesn't, dedup still merges them (identical bug at same location is the same bug regardless of annotation). Pre-existing classification is reconciled at merge time (step 4) rather than splitting the fingerprint.
+4. If the same fingerprint surfaces from multiple dispatches, merge into one finding; union `source` and `produced_by`; set `confidence = min(1.0, confidence + 0.15 * (sources - 1))`. **For `pre_existing`: set the merged value to `false` if ANY dispatch reported `false`** — a single engine confirming the finding is inside the PR's diff is enough to treat it as actionable. Only when all dispatches agree `pre_existing: true` does the merged finding stay pre-existing. If a finding arrives without the field (legacy or parse-degraded), default to `false` for correctness framing / Gemini ce:review (they can hit repo-wide code) and `false` for adversarial (same rationale). Missing `pre_existing` is a schema violation — record a warning in the session log's `parse_errors` bucket but proceed with the default.
 5. Drop findings with `confidence < 0.60`.
-6. Update `agreement` counters (based on `produced_by` — engine identity, not source label).
+6. Update `agreement` counters (based on `produced_by` — engine identity, not source label). Counters count actionable (`pre_existing: false`) findings only; pre-existing findings are tracked separately under `pre_existing_counters` with the same `codex_only` / `gemini_only` / `both` shape so telemetry distinguishes "engines agree on a new bug" from "engines agree on an old code smell."
 
 7. **Quality Gate Phase A — Semantic Dedup (v5.6.0).** After fingerprint-based merge, run one Haiku Agent call to group findings that describe the same underlying issue but differ in wording, severity label, or exact file/line.
 
@@ -742,17 +753,21 @@ GIT_AFTER=$(snapshot_git)
 9. Before applying fixes, for each finding check if its `fingerprint` is in `fingerprints_seen`. If yes, the prior fix did not resolve it. Mark `ESCALATED`, skip auto-fix, append to PR report as "needs human review", do not count against `maxIterations`.
 
 **Auto-Fix (skip if `dryRun: true`):**
-10. Apply `fix_code` via Edit tool. Mark `applied: true` and add fingerprint to `fingerprints_seen`.
+10. Apply `fix_code` via Edit tool **only for findings with `pre_existing: false`**. Mark `applied: true` and add fingerprint to `fingerprints_seen`. Pre-existing findings are skipped by design — they're reported for human awareness, not auto-fix budget. A reviewer spotting an old bug while looking at a PR is signal, but fixing it inside the PR expands scope inappropriately; surface it in the report so the user can file a follow-up.
 
 **Loop:**
-11. Re-run Step 1 until no non-escalated findings remain OR `iteration == maxIterations` (clamped to 1-10).
-12. **`failOnError` branch:** when `iteration == maxIterations` and non-escalated findings remain:
-    - If `failOnError: true` → abort pipeline with non-zero exit, print remaining findings, do NOT proceed to Step 2. `autoCommit` and `postPrComment` never fire.
-    - If `failOnError: false` (default) → promote remaining findings to `ESCALATED` status, proceed to Step 2, summary flags the run as partially unresolved.
+11. Re-run Step 1 until no non-escalated **actionable (`pre_existing: false`)** findings remain OR `iteration == maxIterations` (clamped to 1-10). Pre-existing findings never block loop termination — if the only remaining findings are pre-existing, the loop exits cleanly and delivery shows them in the "Out of PR scope" section.
+12. **`failOnError` branch:** when `iteration == maxIterations` and non-escalated actionable findings remain:
+    - If `failOnError: true` → abort pipeline with non-zero exit, print remaining actionable findings (plus pre-existing list for context), do NOT proceed to Step 2. `autoCommit` and `postPrComment` never fire.
+    - If `failOnError: false` (default) → promote remaining actionable findings to `ESCALATED` status, proceed to Step 2, summary flags the run as partially unresolved. Pre-existing findings are never escalated — they have no fix loop to thrash against.
 13. If `dryRun: true`, run one iteration only and print the findings report. Do not loop, do not auto-fix.
 
 ### Step 2: Deliver
-1. Compile summary from `.arp_session_log.json`:
+1. Compile summary from `.arp_session_log.json`. **Partition findings into two sections before any aggregation:**
+   - **Actionable findings** (`pre_existing: false`) — the main report. These are bugs/risks introduced by the PR or landing within its modified lines. Everything below applies to this set.
+   - **Out of PR scope** (`pre_existing: true`) — a separate collapsible section listed after actionable findings. Show file:line + severity + issue summary only (no `fix_code`, no auto-fix, no escalation). Include a one-line explainer at section top: *"These findings live outside this PR's diff. Reviewed for awareness — file separately if you want them fixed."*
+
+   Aggregate metrics for the actionable set:
    - Iteration count
    - Findings by severity
    - Findings by source (Codex correctness / Codex adversarial / Gemini ce:review contribution)
@@ -761,6 +776,7 @@ GIT_AFTER=$(snapshot_git)
    - Per-engine attribution (`codex_only`, `gemini_only`, `both`)
    - Per-source parse-error count with artifact path
    - **Quality Gate metrics:** Phase A groups found, dedup savings. Phase B dropped count + severity overrides. Phase C suppress/enforce/ignore counts. Display as separate section in summary output. (e.g. *"gemini:ce-review — 1 parse error, raw at `.arp_parse_error_gemini-ce-review_iter1_*.txt`"*). Do not silent-skip.
+   - **Pre-existing partition counts:** total pre-existing, per-engine (codex/gemini), per-severity. Display after actionable metrics. This is how the caller sees "Gemini surfaced 3 pre-existing code smells" without those inflating the actionable count.
 2. Print summary to stdout always.
 3. If `dryRun: true`: stop — do not commit, do not post.
 4. If `autoCommit: true`: execute `git add -u` (modifications to tracked files only — NOT `git add .` which would sweep in unrelated untracked files like editor backups, secrets, or developer scratch) and `git commit -m "chore(arp): autonomous review fixes"`. Off by default.
