@@ -1,11 +1,25 @@
 ---
 name: arp
-version: 5.4.0
+version: 5.4.1
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Fetches PR conversation context (comments, reviews, unresolved threads) for cross-iteration continuity. Dedups by confidence, auto-fixes inline. Supports dry-run. Benchmark mode: /arp benchmark <PR> compares Flash vs Pro findings quality.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [benchmark] [PR number]"
 ---
 
-> **Status:** v5.4.0 — adds `/arp benchmark <PR>` subcommand to compare Gemini Flash (`gemini-3-flash-preview`) vs Pro (`gemini-3.1-pro-preview`) findings quality on a specific PR. Scores findings by precision (confidence ≥ 0.80), depth (body + file:line + fix_code composite), and FP rate (confidence < 0.70). Prints side-by-side ASCII table with verdict. Writes `.arp_benchmark_<epoch>.json` artifact (gitignored, fail-closed secret redaction). Read-only — no auto-fix, no commit, no PR comment. Motivation: empirically compare Flash vs Pro before deciding whether to re-enable Pro in camis_api_native. See CHANGELOG.
+> **Status:** v5.4.1 — fixes GEMINI_API_KEY subshell loading (gemini-cli v0.38.0 does NOT auto-load `~/.gemini/.env`; dispatch wrapper now explicitly exports key), adds Smoke Test section, adds TL;DR quick-reference. v5.4.0: benchmark subcommand. See CHANGELOG.
+
+## TL;DR
+
+| Want to… | Command |
+|----------|---------|
+| Review open PR on current branch | `/arp` |
+| Review specific PR | `/arp 42` |
+| Preview only, no edits | `/arp --dry-run 42` |
+| Gemini only (1 dispatch) | `/arp gemini 42` |
+| Codex only (2 dispatches) | `/arp codex 42` |
+| Compare Flash vs Pro quality | `/arp benchmark 42` |
+| Verify install works | See **Smoke Test** section |
+
+**Key constraints:** PR required (no local file review). `gh` CLI must be authenticated. `GEMINI_API_KEY` must be in env or `~/.gemini/.env`. `autoCommit` and `postPrComment` default off — review output before enabling.
 
 # Agent Review Pipeline (`/arp`)
 
@@ -120,7 +134,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
    - If `both` or `codex`: confirm `codex:codex-rescue` Agent exists. Error: *"Install Codex plugin: /plugin install codex@openai-codex"*.
    - If `both` or `gemini`:
      - Run `gemini --version`; error: *"Install gemini CLI and authenticate"*.
-     - **Require API key auth type (v5.3.0 pin; v5.3.1 relaxed).** Verify `~/.gemini/settings.json` auth selectedType is `gemini-api-key` via `jq -r '.security.auth.selectedType // ""' ~/.gemini/settings.json`; if mismatch, error: *"gemini-cli auth type is '<current>', must be 'gemini-api-key'. Open 'gemini' interactive and run /auth → API Key. OAuth path unsupported in v5.3 (Google OAuth headless quota insufficient for persona fan-out — empirically 429'd across Flash and Pro on v5.2 release day)."* The actual API key itself (credential, not config) is NOT checked here — gemini-cli loads it from `GEMINI_API_KEY` env var OR from a `.env` file in the invocation cwd or `~/.gemini/.env`. If the credential is missing, gemini-cli emits its own actionable error on dispatch: *"When using Gemini API, you must specify the GEMINI_API_KEY environment variable. Update your environment and try again (no reload needed if using .env)!"* — faster to fix once surfaced than debugging a spurious precheck failure when `.env` is properly configured but env var isn't exported to the Claude Code subshell.
+     - **Require API key auth type (v5.3.0 pin; v5.3.1 relaxed).** Verify `~/.gemini/settings.json` auth selectedType is `gemini-api-key` via `jq -r '.security.auth.selectedType // ""' ~/.gemini/settings.json`; if mismatch, error: *"gemini-cli auth type is '<current>', must be 'gemini-api-key'. Open 'gemini' interactive and run /auth → API Key. OAuth path unsupported in v5.3 (Google OAuth headless quota insufficient for persona fan-out — empirically 429'd across Flash and Pro on v5.2 release day)."* The actual API key itself (credential, not config) is NOT checked here. **gemini-cli v0.38.0 does NOT auto-load `~/.gemini/.env` in Claude Code subshell context** (empirically verified 2026-04-16) — the env var must be explicitly present. The Gemini dispatch wrapper (below) handles this by prepending `[[ -z "$GEMINI_API_KEY" ]] && export GEMINI_API_KEY=$(grep -m1 '^GEMINI_API_KEY=' ~/.gemini/.env 2>/dev/null | cut -d'=' -f2-)` before each `gemini` invocation. If the key is absent from both env and `~/.gemini/.env`, the export is a no-op and gemini-cli emits its own actionable error: *"When using Gemini API, you must specify the GEMINI_API_KEY environment variable."*
      - Verify `~/.gemini/commands/ce/review.toml` exists; error: *"Install ce:review extension for Gemini"*.
      - `gemini models list` is NOT called — it hangs on some CLI versions and a positive response from a single prompt probe is cheaper (see Gemini dispatch wrapper below).
    - Always run `gh auth status` (PR is the sole review target); error: *"Run `gh auth login` — ARP needs authenticated `gh` to resolve the PR diff"*.
@@ -428,8 +442,10 @@ GIT_BEFORE=$(snapshot_git)
 
 # 3. Dispatch — yolo approval + narrowed include-dir + hard timeout.
 #    Model pinned to gemini-3-flash-preview (v5.3.0); cascade dropped.
-#    Auth: GEMINI_API_KEY env var must be set (Step 0.3 precheck enforces).
-#    Timeout reverted to 10 min — parallel persona spawn completes in 3-5 min.
+#    Auth: gemini-cli v0.38.0 does NOT auto-load ~/.gemini/.env in subshell —
+#    explicitly export key if not already in env.
+[[ -z "$GEMINI_API_KEY" ]] && \
+  export GEMINI_API_KEY=$(grep -m1 '^GEMINI_API_KEY=' ~/.gemini/.env 2>/dev/null | cut -d'=' -f2-)
 timeout 600 gemini -m "gemini-3-flash-preview" --approval-mode yolo \
   --include-directories "$HOME/.gemini/commands/ce" \
   -p "$(cat .arp_stage_prompt.md)" -o text
@@ -513,10 +529,39 @@ GIT_AFTER=$(snapshot_git)
 - Same scrubber pattern set (API keys, JWT-shaped tokens, PEM private-key blocks, inline credential assignments, bearer tokens) is applied at three points: (1) PR comment body before `gh pr comment` (Step 2.5), (2) parse-error artifact files at write-time (JSON Robustness step 2), (3) session log on rotation (Step 2.6). Fail-closed at every point — scrubber error aborts the action rather than writing/posting raw.
 - `<ref>` validated against `^[A-Za-z0-9/_.-]+$` before interpolation — blocks shell/prompt injection through attacker-controlled branch or PR refs.
 - **Model locked to `gemini-3-flash-preview` (v5.3.0).** Cascade to Flash-Lite or Pro dropped. Attempting other models via `geminiModel` userConfig no-ops — Step 0.3 precheck pins the `-m` flag regardless. Re-adding Pro / Flash-Lite would require a fork.
-- **Auth locked to API key Tier 1 (v5.3.0).** `~/.gemini/settings.json` auth `selectedType` must be `gemini-api-key` (configured via `gemini` interactive → `/auth` → API Key). The credential itself lives in `GEMINI_API_KEY` env var OR a `.env` file that gemini-cli auto-loads; Step 0.3 precheck validates only the config (auth type) since the credential is gemini-cli's concern and it emits actionable errors on dispatch if the key is missing. OAuth personal path unsupported (headless cumulative quota insufficient, empirically 429'd on v5.2 release day).
+- **Auth locked to API key Tier 1 (v5.3.0).** `~/.gemini/settings.json` auth `selectedType` must be `gemini-api-key` (configured via `gemini` interactive → `/auth` → API Key). The credential must be in `GEMINI_API_KEY` env var or `~/.gemini/.env`. **gemini-cli v0.38.0 does NOT auto-load `.env` in Claude Code subshell context** — the Gemini dispatch wrapper explicitly exports the key before each invocation (see dispatch code above). OAuth personal path unsupported (headless cumulative quota insufficient, empirically 429'd on v5.2 release day).
 - Gemini dispatch has a 10-minute `timeout 600` watchdog — parallel persona spawn on API key Tier 1 completes in 3-5 min; anything beyond 10 min is assumed stuck. On timeout, SIGTERM and abort the Gemini side for this iteration (Codex findings still proceed).
 - Concurrency guard uses real `flock -n` advisory lock on `.arp.lock`, not an mtime sniff — no TOCTOU window.
 - Pre-flight working-tree freshness check (Step 0.5) aborts when `git diff --quiet HEAD` or `git diff --cached --quiet` is non-clean. Prevents the "second /arp run reviews stale PR-HEAD diff while the local tree already has a previous run's fixes" failure mode — wasted dispatch quota plus mid-loop "old_string not found" Edit corruption. Skipped under `--dry-run` because peek mode applies no edits.
+
+## Smoke Test
+
+No automated test harness exists (every change requires a live e2e run). Use this procedure after any SKILL.md change to verify the pipeline isn't silently broken:
+
+```bash
+# 1. Verify Gemini API key is loadable in subshell
+[[ -z "$GEMINI_API_KEY" ]] && \
+  export GEMINI_API_KEY=$(grep -m1 '^GEMINI_API_KEY=' ~/.gemini/.env 2>/dev/null | cut -d'=' -f2-)
+[[ -n "$GEMINI_API_KEY" ]] && echo "OK: key loaded" || echo "FAIL: key missing"
+
+# 2. Gemini headless probe (should respond within 10s)
+export GEMINI_API_KEY=$(grep -m1 '^GEMINI_API_KEY=' ~/.gemini/.env 2>/dev/null | cut -d'=' -f2-)
+timeout 10 gemini -m gemini-3-flash-preview -p "reply with the word PONG only" -o text \
+  && echo "OK: gemini reachable" || echo "FAIL: gemini unreachable"
+
+# 3. Dry-run on a known PR (no edits applied, no commit, no comment)
+/arp --dry-run <PR>
+# Expected: findings printed, "autoCommit=false → no commit", no file changes
+# Verify: git diff --quiet HEAD  (should be clean)
+```
+
+**What to check in dry-run output:**
+- Dispatch health line shows all 3 dispatches (or correct subset for engine)
+- At least 1 finding returned (0 findings on a non-trivial PR = silent parse failure)
+- `Parse errors: 0` — non-zero means JSON schema mismatch needs investigation
+- No `ESCALATED` on first run (would indicate fingerprint bug)
+
+**Known-good baseline PR:** `camis_api_native#261` — Flash produced 4 findings (2026-04-16 run).
 
 ## Tuning Notes
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## v5.4.1 — 2026-04-16
+
+**fix: GEMINI_API_KEY subshell loading + smoke test + TL;DR**
+
+- `gemini-cli v0.38.0` does NOT auto-load `~/.gemini/.env` in Claude Code subshell context (empirically verified). Dispatch wrapper now explicitly exports key: `[[ -z "$GEMINI_API_KEY" ]] && export GEMINI_API_KEY=$(grep -m1 '^GEMINI_API_KEY=' ~/.gemini/.env | cut -d'=' -f2-)`. Corrected misleading claim in Step 0.3 and Security Constraints.
+- Added **Smoke Test** section — 3-step verification procedure (key load check, Gemini headless probe, dry-run with known-good baseline PR).
+- Added **TL;DR** quick-reference table at top of SKILL.md — command lookup without reading 600+ lines.
+
+---
+
 ## v5.4.0 — 2026-04-16
 
 **feat: /arp benchmark — Flash vs Pro findings quality comparison**
