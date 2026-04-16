@@ -6,6 +6,7 @@
     ".": {
       "release-type": "simple",
       "package-name": "agent-review-pipeline",
+      "merge": true,
       "extra-files": [
         {
           "type": "json",
