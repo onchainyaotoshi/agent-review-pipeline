@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.5.0 — 2026-04-16
+
+**feat: remove benchmark subcommand**
+
+Flash vs Pro comparison done — Flash wins on cost, Pro not worth it. Benchmark was a one-time decision tool; removing it reduces SKILL.md by ~160 lines and eliminates dead code.
+
+---
+
 ## v5.4.1 — 2026-04-16
 
 **fix: GEMINI_API_KEY subshell loading + smoke test + TL;DR**
