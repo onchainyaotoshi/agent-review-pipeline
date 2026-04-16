@@ -1,5 +1,18 @@
 # Changelog
 
+## [6.3.0](https://github.com/onchainyaotoshi/agent-review-pipeline/compare/agent-review-pipeline-v6.2.0...agent-review-pipeline-v6.3.0) (2026-04-16)
+
+
+### Features
+
+* **arp:** add iterations + quality gate to PR header ([5edd4c1](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/5edd4c13d5c2a82573b65db5e797183d80b3cf73))
+
+
+### Bug Fixes
+
+* **arp:** align SKILL.md version to 6.2.0 ([191bd15](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/191bd15d5f6e912bb751a2dee3c17fe7ac3a52b8))
+* **arp:** bump to 6.1.3 ([fef2309](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/fef23098a1ae9890a6d1ae514fb98111b5e80002))
+
 ## [6.2.0](https://github.com/onchainyaotoshi/agent-review-pipeline/compare/agent-review-pipeline-v6.1.0...agent-review-pipeline-v6.2.0) (2026-04-16)
 
 
