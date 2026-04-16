@@ -1,11 +1,11 @@
 ---
 name: arp
-version: 5.5.0
+version: 5.6.0
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Fetches PR conversation context (comments, reviews, unresolved threads) for cross-iteration continuity. Dedups by confidence, auto-fixes inline. Supports dry-run. Pinned to Gemini Flash (gemini-3-flash-preview) — empirically proven cost-effective over Pro.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** v5.5.0 — removes benchmark subcommand (one-time Flash vs Pro comparison done; Flash wins on cost; Pro not worth it). v5.4.1: GEMINI_API_KEY subshell fix + smoke test + TL;DR. See CHANGELOG.
+> **Status:** v5.6.0 — adds Quality Gate (semantic dedup, finding classifier, enhanced rules extraction). v5.5.0: removes benchmark subcommand.
 
 ## TL;DR
 

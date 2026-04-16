@@ -1,5 +1,18 @@
 # Changelog
 
+## v5.6.0 — 2026-04-16
+
+**feat: Quality Gate — semantic dedup, finding classifier, enhanced rules**
+
+Three-phase quality filter between Stage 1 (dispatch) and Stage 2 (deliver):
+- **Phase A:** Semantic dedup — Haiku Agent groups findings that describe the same underlying issue across engines, even when wording/severity/file:line differ. Replaces fingerprint-only dedup with LLM-based grouping. Merged findings get confidence boost (+0.15 per extra source).
+- **Phase B:** Finding classifier — Haiku Agent rates each finding as real vs noise (1-5 scale), drops findings below `classifierMinScore` (default 3), re-ranks severity when mismatched. Configurable strictness.
+- **Phase C:** Enhanced rules extraction — Haiku Agent classifies repo rules (AGENTS.md, CLAUDE.md, .claude/rules/) into SUPPRESS (intentional patterns, don't flag), ENFORCE (correctness constraints, verify), IGNORE (dev-process rules, strip). Replaces raw rules injection with structured `<review_context>` block.
+
+All phases fail-open on error (fallback to existing behavior). Session log extended with `quality_gate` telemetry. Config via `qualityGate` userConfig in plugin.json.
+
+---
+
 ## v5.5.0 — 2026-04-16
 
 **feat: remove benchmark subcommand**

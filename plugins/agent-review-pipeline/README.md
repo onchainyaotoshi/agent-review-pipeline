@@ -21,6 +21,29 @@ Autonomous dual-engine code review pipeline for [Claude Code](https://claude.ai/
 
 6. **Agreement Telemetry** — Per-run `.arp_session_log.json` records Codex↔Gemini agreement rate for cost/value tuning.
 
+## Quality Gate (v5.6.0)
+
+Three-phase post-dispatch quality filter, each using a lightweight Haiku Agent call:
+
+| Phase | When | What | Cost |
+|-------|------|------|------|
+| C | Pre-dispatch | Classify repo rules as suppress/enforce/ignore | ~500 tokens |
+| A | Post-merge | Semantic dedup — group similar findings across engines | ~500-1000 tokens |
+| B | Post-dedup | Classifier — filter false positives, re-rank severity | ~500-1500 tokens |
+
+Total overhead: ~3 Haiku calls per run (~2000-3000 tokens). All phases fail-open on error.
+
+**Config (plugin.json userConfig):**
+
+    {
+      "qualityGate": {
+        "semanticDedup": true,
+        "classifier": true,
+        "classifierMinScore": 3,
+        "enhancedRules": true
+      }
+    }
+
 ## How It Differs from Single-Engine Agents
 
 | Single-Engine Agent | ARP |
