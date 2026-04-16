@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.0](https://github.com/onchainyaotoshi/agent-review-pipeline/compare/agent-review-pipeline-v6.0.0...agent-review-pipeline-v6.1.0) (2026-04-16)
+
+
+### Features
+
+* **arp:** dryRun defaults to true ([cd7c086](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/cd7c0864d3556a423e4b206f08a6a5222204dc64))
+
 ## [6.0.0](https://github.com/onchainyaotoshi/agent-review-pipeline/compare/agent-review-pipeline-v5.6.0...agent-review-pipeline-v6.0.0) (2026-04-16)
 
 
