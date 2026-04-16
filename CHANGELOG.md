@@ -1,5 +1,22 @@
 # Changelog
 
+## [6.2.0](https://github.com/onchainyaotoshi/agent-review-pipeline/compare/agent-review-pipeline-v6.1.0...agent-review-pipeline-v6.2.0) (2026-04-16)
+
+
+### Features
+
+* **arp:** add Gemini model to PR header ([367a0cb](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/367a0cb3851cbb9f2efd39b7b10fddcd240a3da2))
+* **arp:** print PR header before review starts ([bc6f32d](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/bc6f32d8987b23ccb31eb3fd02ddfefee3cbb04d))
+* auto-merge release PR ([f9cb570](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/f9cb570c058922c0798a9e5f8028bb2f0342296c))
+
+
+### Bug Fixes
+
+* **arp:** align SKILL.md version to 6.1.1 ([4b8d9da](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/4b8d9dab202b7911f27f74e1617c398f39c15fde))
+* **arp:** bump to 6.1.2 ([cb839fd](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/cb839fd12f3a17907bc140c0f253c7aea817ac29))
+* **arp:** multi-PR detection with user-facing error message ([b835437](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/b8354379d6cf898d7296cf27466eaba111993cc6))
+* **arp:** read userConfig.dryRun as fallback for CLI flag ([fa39b24](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/fa39b247ef8a2bdd48aea576373dca0d2870ba1b))
+
 ## [6.1.0](https://github.com/onchainyaotoshi/agent-review-pipeline/compare/agent-review-pipeline-v6.0.0...agent-review-pipeline-v6.1.0) (2026-04-16)
 
 
