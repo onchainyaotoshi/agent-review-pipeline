@@ -97,7 +97,7 @@ Codex has no built-in multi-persona reviewer, so ARP supplies its dual-framing d
 
 ## Usage
 
-Review the current branch, asymmetric 3-dispatch by default:
+Review the current branch, asymmetric 3-dispatch by default (dry-run by default — no files edited):
 ```
 /arp
 ```
@@ -107,11 +107,48 @@ Review a specific PR:
 /arp 42
 ```
 
-Preview without editing files:
+Explicit preview without editing (redundant since v6.0.1 — dry-run is the default):
 ```
 /arp --dry-run
 /arp --dry-run 42
 ```
+
+To enable auto-fix (edit files directly, bounded loop with kill-switch on repeat failures):
+```
+/arp --dry-run=false 42
+```
+
+## TODO
+
+### Phase 1 — Safe-by-default dry-run (v6.0.1, current)
+
+**Why:** Auto-fix is powerful but risky. A buggy `fix_code` from an LLM can corrupt files — especially in bounded loops where the same failing fix is applied repeatedly. The loop-thrash kill switch mitigates this, but it's a safety net, not a guarantee.
+
+**What changed:** `dryRun` userConfig default changed from `false` → `true`. ARP now previews findings by default. Users opt-in to auto-fix explicitly.
+
+**Current behavior:**
+- `/arp 42` → dry-run, findings printed, no edits
+- `/arp --dry-run=false 42` → auto-fix loop enabled
+
+**Why now:** v6.0.0 shipped with Quality Gate (semantic dedup, classifier, enhanced rules extraction) giving better signal on finding quality. Auto-fix in v5.x was evaluated primarily on simple, low-risk changes. The dual-engine architecture is stable. Time to make dry-run the default.
+
+### Phase 2 — Monitor + validate (post-v6.0.1)
+
+Track in production:
+- Escalation rate: if fingerprints reappear frequently, kill switch fires more → means auto-fix is proposing wrong fixes repeatedly
+- Edit failure rate: "old_string not found" errors → means fix already applied or file changed mid-loop
+- Finding classifier real_score distribution: are auto-fixed findings actually high-quality (real_score ≥ 4)?
+
+### Phase 3 — Flip default when stable (target: v6.1.0 or later)
+
+If Phase 2 metrics show:
+- Escalation rate < 5% of findings
+- Edit failure rate < 2% of auto-fix attempts
+- Classifier real_score ≥ 4 for ≥ 80% of auto-fixed findings
+
+→ Change `dryRun` default back to `false` (auto-fix on by default).
+
+`autoCommit` and `postPrComment` stay `false` by default. Those require explicit user enablement regardless of Phase 3 outcome.
 
 ### Engine Selection
 
