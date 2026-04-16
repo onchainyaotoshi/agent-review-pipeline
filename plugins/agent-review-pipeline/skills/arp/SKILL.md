@@ -186,11 +186,79 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
        done
    ```
 
-   Inject `.arp_repository_rules.md` contents into the `<repository_rules>` block of every engine prompt. If a rules file doesn't exist on the base ref, omit it silently. Never inject the working-tree copy.
+   Inject `$REVIEW_CONTEXT_BLOCK` into every engine prompt. This is the Phase C structured output (suppress/enforce categories) when Quality Gate is enabled, or the raw `<repository_rules>` block when Phase C is disabled or fell back. If a rules file doesn't exist on the base ref, omit it silently. Never inject the working-tree copy.
 
    **Worktree note (5.2.0-rc1):** Projects that use `git worktree` (e.g., `camis_api_native` keeps worktrees under `.claude/worktrees/`) will run ARP from a worktree directory. Each worktree has its own working tree but shares the parent repo's `.git/objects`. The `gh pr view` and `git show origin/<base>:` calls work identically from any worktree. The flock advisory lock at `.arp.lock` is per-worktree path (each worktree is a separate cwd) — two `/arp` invocations in two worktrees of the same repo will not collide on the lock. This is intentional: each worktree reviews its own branch independently. Operators running concurrent `/arp` with `autoCommit=true` across worktrees should be aware that pushes go to whichever PR each worktree's branch is associated with — there is no cross-worktree coordination.
-7. Resolve PR diff via `gh pr diff <n>` (where `<n>` was passed or auto-detected in step 1).
-8. **Fetch PR conversation context (5.2.0-rc3 — rewritten again after rc2 self-review surfaced 2 HIGH bugs)** so engines have continuity across iterations of a long-lived PR. rc1 had a prompt-injection vector via XML tags + invalid `gh pr view --json reviewThreads`. rc2 fixed both but introduced (a) a malformed `is_arp_post` jq filter that silently emptied all PR context and (b) a bot-author regex bypassable via `github-actions-evil` and (c) a tag-break bypass via literal `</pr_context>` in JSON values. rc3 closes all three.
+7. **Quality Gate Phase C — Enhanced Rules Extraction (v5.6.0).** After building `.arp_repository_rules.md` (step 6 above), run one Haiku Agent call to classify the raw rules into review-relevant categories. This replaces the raw `<repository_rules>` block in engine prompts with a structured `<review_context>` block that separates intentional patterns (suppress) from correctness constraints (enforce) and strips irrelevant dev-process rules (ignore).
+
+   **Gate check:** read `qualityGate` from plugin.json userConfig. If `qualityGate.enhancedRules` is `false`, skip this phase and use existing raw injection. Default: enabled.
+
+   **Agent dispatch:**
+
+   ```bash
+   RULES_CONTENT=$(cat .arp_repository_rules.md 2>/dev/null || echo "")
+   if [[ -n "$RULES_CONTENT" ]]; then
+     cat > .arp_rules_classify_prompt.md <<'PROMPT'
+   You are a code review context optimizer. Given raw repository rules below,
+   extract and categorize into:
+
+   1. SUPPRESS rules — patterns that are INTENTIONAL in this codebase.
+      Engines should NOT flag these as issues. (e.g., "we use CommonJS",
+      "controllers follow X layout", "this file is auto-generated")
+   2. ENFORCE rules — correctness constraints engines SHOULD check.
+      (e.g., "always validate user input", "never log secrets")
+   3. IGNORE — generic dev process rules irrelevant to code review.
+      (e.g., "use conventional commits", "PRs need 2 approvals")
+
+   Output JSON only — no markdown fences, no prose:
+   {"suppress": ["rule summary 1", "rule summary 2"], "enforce": ["rule summary 3", "rule summary 4"], "ignore_count": N, "token_count_estimate": N}
+
+   <raw_rules>
+   PROMPT
+     echo "$RULES_CONTENT" >> .arp_rules_classify_prompt.md
+     echo "</raw_rules>" >> .arp_rules_classify_prompt.md
+   fi
+   ```
+
+   Then invoke Agent tool with `model: "haiku"`, description "Classify repo rules for ARP", prompt:
+
+   > Read `.arp_rules_classify_prompt.md` and respond with ONLY the JSON object requested — no markdown fences, no prose before or after.
+
+   **Parse result:** `jq -e '.suppress and .enforce'` to validate structure. On parse failure, set `PHASE_C_FALLBACK=true` and use raw `.arp_repository_rules.md` as before.
+
+   **Build structured review context:**
+
+   ```bash
+   if [[ "$PHASE_C_FALLBACK" != "true" ]]; then
+     SUPPRESS_RULES=$(echo "$AGENT_RESPONSE" | jq -r '.suppress[]' 2>/dev/null)
+     ENFORCE_RULES=$(echo "$AGENT_RESPONSE" | jq -r '.enforce[]' 2>/dev/null)
+     {
+       echo "<review_context>"
+       echo "## Patterns that are INTENTIONAL — DO NOT FLAG:"
+       echo "$SUPPRESS_RULES" | while read -r line; do echo "- $line"; done
+       echo ""
+       echo "## Correctness constraints — VERIFY THESE:"
+       echo "$ENFORCE_RULES" | while read -r line; do echo "- $line"; done
+       echo "</review_context>"
+     } > .arp_review_context.md
+     REVIEW_CONTEXT_BLOCK=$(cat .arp_review_context.md)
+   else
+     REVIEW_CONTEXT_BLOCK="<repository_rules>$(cat .arp_repository_rules.md)</repository_rules>"
+   fi
+   ```
+
+   **Session log telemetry:**
+
+   ```bash
+   IGNORE_COUNT=$(echo "$AGENT_RESPONSE" | jq -r '.ignore_count // 0' 2>/dev/null)
+   SUPPRESS_COUNT=$(echo "$AGENT_RESPONSE" | jq -r '.suppress | length' 2>/dev/null || echo 0)
+   ENFORCE_COUNT=$(echo "$AGENT_RESPONSE" | jq -r '.enforce | length' 2>/dev/null || echo 0)
+   ```
+
+   Cleanup: `rm -f .arp_rules_classify_prompt.md .arp_review_context.md` in Step 2 cleanup.
+
+8. Resolve PR diff via `gh pr diff <n>` (where `<n>` was passed or auto-detected in step 1).
+9. **Fetch PR conversation context (5.2.0-rc3 — rewritten again after rc2 self-review surfaced 2 HIGH bugs)** so engines have continuity across iterations of a long-lived PR. rc1 had a prompt-injection vector via XML tags + invalid `gh pr view --json reviewThreads`. rc2 fixed both but introduced (a) a malformed `is_arp_post` jq filter that silently emptied all PR context and (b) a bot-author regex bypassable via `github-actions-evil` and (c) a tag-break bypass via literal `</pr_context>` in JSON values. rc3 closes all three.
 
    **Single GraphQL fetch** (no race between two API calls — Codex adversarial rc2 finding):
 
@@ -332,7 +400,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
    # working tree regardless of PR number.
    ```
 
-9. Initialize `.arp_session_log.json` with empty findings.
+10. Initialize `.arp_session_log.json` with empty findings.
 
 ### Step 1: Review (Asymmetric Dual-Engine)
 
@@ -375,7 +443,7 @@ Prompt: shared read-only contract + "You are a red-team attacker trying to break
 
 ```bash
 # v5.2.1 — source from `gh pr diff --name-only` to match the actual
-# review target (Step 0.7 uses `gh pr diff <n>`). v5.2.0-rc6 used
+# review target (Step 0.8 uses `gh pr diff <n>`). v5.2.0-rc6 used
 # `git diff --name-only "origin/$PR_BASE...HEAD"` which diverges from
 # the PR head whenever local commits are unpushed; the summary then
 # described the wrong file set and the prompt could tell Gemini to
@@ -514,7 +582,7 @@ GIT_AFTER=$(snapshot_git)
    **Telemetry:** record `{ "redactions_applied": <int>, "kinds": ["api-key", "credential", ...] }` in the session log under a top-level `redactions` field. If `redactions_applied > 0`, append a footer to the PR comment body: *"> Note: N strings matching secret-pattern heuristics were redacted from this comment. The original session log is kept locally (gitignored) for human review."*
 
    **Scope note (rc7):** redaction applies to the PR comment body, parse-error artifacts (scrubbed at write-time, see JSON Robustness step 2), and rotated session logs (scrubbed on rotation, see Step 2.6). The active session log stays raw during the run because kill-switch fingerprint matching reads it back — but it lives in memory of the iteration, is gitignored, and is scrubbed before archival. Live `.arp_*` artifacts in the working directory between iterations should still be treated as sensitive (don't paste, don't upload). Fully runtime-side scrubbing of in-memory dispatch buffers is the only remaining attack surface and is deferred to the runtime-rewrite branch.
-6. Clean up `.arp_stage_prompt.md`, `.arp_pr_context.json`, `.arp_pr_threads.json`, `.arp_repository_rules.md`, and any `.arp_*.tmp` leftovers (rc4 glob fix — the `.arp_pr_context.json.tmp` atomic-write sidecar uses dot-tmp, not underscore; rc3's `.arp_*_tmp` glob silently failed to match so the sidecar could linger across runs), then release both locks via `flock -u 8 2>/dev/null || true; flock -u 9` (then `rm -f .arp.lock`). fd 8 is the PR-scoped lock from Step 0.8 (may be absent if no PR number or not in a git repo); fd 9 is the always-held per-worktree lock from Step 0.4. **Scrub the session log on rotation:** before renaming `.arp_session_log.json` to `.arp_session_log.<timestamp>.json`, run the rc5 scrubber over the JSON file's string values (file content, issue text, fix_code) — the active log stays raw during the run for kill-switch fingerprint matching, but the archived copy is scrubbed so secret material doesn't accumulate across runs. If the scrubber errors, abort rotation rather than archive raw content (matches Step 2.5 fail-closed semantics). Prune `.arp_session_log.*.json`, `.arp_parse_error_*.txt`, and `.arp_benchmark_*.json` older than 7 days from the repo root to prevent unbounded growth.
+6. Clean up `.arp_stage_prompt.md`, `.arp_pr_context.json`, `.arp_pr_threads.json`, `.arp_repository_rules.md`, and any `.arp_*.tmp` leftovers (rc4 glob fix — the `.arp_pr_context.json.tmp` atomic-write sidecar uses dot-tmp, not underscore; rc3's `.arp_*_tmp` glob silently failed to match so the sidecar could linger across runs), then release both locks via `flock -u 8 2>/dev/null || true; flock -u 9` (then `rm -f .arp.lock`). fd 8 is the PR-scoped lock from Step 0.9 (may be absent if no PR number or not in a git repo); fd 9 is the always-held per-worktree lock from Step 0.4. **Scrub the session log on rotation:** before renaming `.arp_session_log.json` to `.arp_session_log.<timestamp>.json`, run the rc5 scrubber over the JSON file's string values (file content, issue text, fix_code) — the active log stays raw during the run for kill-switch fingerprint matching, but the archived copy is scrubbed so secret material doesn't accumulate across runs. If the scrubber errors, abort rotation rather than archive raw content (matches Step 2.5 fail-closed semantics). Prune `.arp_session_log.*.json`, `.arp_parse_error_*.txt`, and `.arp_benchmark_*.json` older than 7 days from the repo root to prevent unbounded growth.
 
 ## Safety Rails
 
