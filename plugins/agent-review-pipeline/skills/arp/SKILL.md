@@ -175,11 +175,16 @@ Mode: auto-fix (will apply edits, bounded loop)
 ``` Local file-path review is no longer supported (removed in rc8 — PR is the sole review target). **PR number validation (rc15):** validate the resolved number against `^[0-9]+$` before any shell interpolation. Reject with *"Invalid PR number: <n> — must be a positive integer"* if it contains anything else. Blocks shell injection through attacker-supplied PR-number-shaped input.
 
    ```bash
-   # Dry-run: CLI flag overrides, else read from plugin.json userConfig (v6.1.1 fix)
+   # Dry-run: CLI flag overrides, else read from plugin.json userConfig (v6.1.1 fix).
    # Skill loader already sets dryRun=true when --dry-run / -d passed.
-   # If not set by CLI, read the config default so plugin.json default=true actually works.
+   # If not set by CLI, read the config default. Fallback must match plugin.json's
+   # declared default (`dryRun.default: true`) — safe-by-default is the entire
+   # point of v6.1.1. A `// false` fallback silently flips every invocation
+   # where userconfig is missing/malformed into auto-fix mode, defeating the
+   # rationale. Both jq's `//` alternative AND the outer `|| echo` fallback
+   # land on `true`.
    if [[ -z "$dryRun" ]]; then
-     dryRun=$(jq -r '.dryRun // false' <userconfig-path> 2>/dev/null || echo false)
+     dryRun=$(jq -r '.dryRun // true' <userconfig-path> 2>/dev/null || echo true)
    fi
    ```
 
