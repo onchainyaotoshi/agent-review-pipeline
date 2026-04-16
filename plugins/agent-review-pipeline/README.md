@@ -168,6 +168,37 @@ Exit `0` = model is responsive. Exit `2` or `3` = capacity exhausted; pick a dif
    └────────────────────────────────────────────┘
 ```
 
+### Gemini Engine Internals (`/ce:review`)
+
+```mermaid
+flowchart TD
+    ARP["ARP Orchestrator\n(Claude Code)"] -->|"gemini -m gemini-3-flash-preview\n-p cat .arp_stage_prompt.md"| GEMINI["Gemini Flash 3\n(gemini-cli headless)"]
+
+    GEMINI --> CMD["/ce:review\nreview.toml"]
+    CMD -->|"activate_skill ce-review"| SKILL["ce-review SKILL.md\n(ARP fork — report-only only)"]
+
+    SKILL --> S1["Stage 1: Scope\ngit diff base:SHA\n→ file list + diff text"]
+    S1 --> S2["Stage 2: Persona Selection\n6 always-on + N conditionals\nbased on diff content"]
+
+    S2 --> PA["Always-on ×6:\ncorrectness · testing · maintainability\nproject-standards · agent-native\nlearnings-researcher"]
+    S2 --> PB["Conditional 0–8:\nsecurity · performance · api-contract\nreliability · adversarial · migrations\ndhh-rails · kieran-rails · frontend-races ..."]
+
+    PA --> S3["Stage 3: Parallel Dispatch\nEach persona → structured JSON\n{severity: P0–P3, file, line,\nissue, fix_code, autofix_class}"]
+    PB --> S3
+
+    S3 --> S4["Stage 4: Synthesis\nMerge + dedup findings\nConservative routing wins\non persona disagreements"]
+
+    S4 --> OUT["stdout: JSON findings block"]
+    OUT --> ARP2["ARP parses stdout\nFingerprint merge with Codex findings\nConfidence +0.15 if both engines agree"]
+
+    style GEMINI fill:#4285f4,color:#fff
+    style PA fill:#34a853,color:#fff
+    style PB fill:#fbbc04,color:#000
+    style S4 fill:#ea4335,color:#fff
+```
+
+**Why not a black box:** `/ce:review` isn't one reviewer — it spawns N personas in parallel, each returning structured JSON. Stage 4 Synthesis merges and resolves conflicts (conservative route wins on disagreement). ARP receives the merged JSON as stdout — no disk writes, no branch switch, `mode:report-only` enforced by the ARP fork.
+
 ## Example Output
 
 ```
