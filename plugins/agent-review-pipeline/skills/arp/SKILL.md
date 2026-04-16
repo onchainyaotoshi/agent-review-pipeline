@@ -621,18 +621,83 @@ GIT_AFTER=$(snapshot_git)
    }
    ```
 
+8. **Quality Gate Phase B — Finding Classifier (v5.6.0).** After semantic dedup, run one Haiku Agent call to assess whether each finding is a real, actionable issue. Drop noise. Re-rank severity if needed.
+
+   **Gate check:** if `qualityGate.classifier` is `false`, skip.
+
+   **Write findings for classification:**
+
+   ```bash
+   jq -c '{findings: [.findings[] | {id: (.file + ":" + (.line|tostring) + ":" + (.severity|tostring)), file, line, severity, issue, confidence}]}' \
+     .arp_session_log.json > .arp_classify_input.json
+   ```
+
+   Invoke Agent tool with `model: "haiku"`, description "Classify ARP findings", prompt:
+
+   > Read `.arp_classify_input.json`. You are a senior engineer triaging code review findings. For each finding:
+   >
+   > 1. Is this a REAL, ACTIONABLE issue? (Not a style nitpick, not a hypothetical edge case that can't happen, not a false positive from misunderstanding codebase conventions.)
+   > 2. Rate confidence in your assessment: 1-5 (5 = definitely real issue, 1 = definitely noise).
+   > 3. Is the severity label correct? If not, suggest the correct one.
+   >
+   > Output JSON only — no markdown fences, no prose:
+   > `{"assessments": [{"id": "...", "real_score": 4, "suggested_severity": "medium"}, ...]}`
+   >
+   > Every finding ID must appear exactly once.
+
+   **Parse + filter:**
+
+   ```bash
+   MIN_SCORE=$(jq -r '.qualityGate.classifierMinScore // 3' <userconfig-path> 2>/dev/null || echo 3)
+   DROPPED_IDS=()
+   SEVERITY_OVERRIDES=0
+
+   echo "$AGENT_RESPONSE" | jq -c '.assessments[]?' | while read -r assessment; do
+     ID=$(echo "$assessment" | jq -r '.id')
+     REAL_SCORE=$(echo "$assessment" | jq -r '.real_score')
+     SUGGESTED=$(echo "$assessment" | jq -r '.suggested_severity // empty')
+
+     if [[ "$REAL_SCORE" -lt "$MIN_SCORE" ]]; then
+       # Drop finding — remove from session log findings array
+       DROPPED_IDS+=("$ID")
+     elif [[ -n "$SUGGESTED" ]]; then
+       CURRENT_SEV=$(jq -r --arg id "$ID" '.findings[] | select((.file+":"+(.line|tostring)+":"+(.severity|tostring)) == $id) | .severity' .arp_session_log.json)
+       if [[ "$SUGGESTED" != "$CURRENT_SEV" ]]; then
+         # Override severity in session log
+         SEVERITY_OVERRIDES=$((SEVERITY_OVERRIDES + 1))
+       fi
+     fi
+
+     # Add real_score to finding for debugging
+     # Update session log: .findings[] | add real_score field
+   done
+   ```
+
+   **Fallback:** if Agent call fails or JSON invalid, keep all findings unchanged.
+
+   **Session log telemetry:** add to `quality_gate.phase_b`:
+   ```json
+   {
+     "input_count": <findings count before filter>,
+     "dropped": <DROPPED_IDS count>,
+     "severity_overrides": <SEVERITY_OVERRIDES>,
+     "dropped_ids": ["id1", "id2"],
+     "fallback": false
+   }
+   ```
+
 **Loop-Thrash Kill Switch:**
-8. Before applying fixes, for each finding check if its `fingerprint` is in `fingerprints_seen`. If yes, the prior fix did not resolve it. Mark `ESCALATED`, skip auto-fix, append to PR report as "needs human review", do not count against `maxIterations`.
+9. Before applying fixes, for each finding check if its `fingerprint` is in `fingerprints_seen`. If yes, the prior fix did not resolve it. Mark `ESCALATED`, skip auto-fix, append to PR report as "needs human review", do not count against `maxIterations`.
 
 **Auto-Fix (skip if `dryRun: true`):**
-9. Apply `fix_code` via Edit tool. Mark `applied: true` and add fingerprint to `fingerprints_seen`.
+10. Apply `fix_code` via Edit tool. Mark `applied: true` and add fingerprint to `fingerprints_seen`.
 
 **Loop:**
-10. Re-run Step 1 until no non-escalated findings remain OR `iteration == maxIterations` (clamped to 1-10).
-11. **`failOnError` branch:** when `iteration == maxIterations` and non-escalated findings remain:
+11. Re-run Step 1 until no non-escalated findings remain OR `iteration == maxIterations` (clamped to 1-10).
+12. **`failOnError` branch:** when `iteration == maxIterations` and non-escalated findings remain:
     - If `failOnError: true` → abort pipeline with non-zero exit, print remaining findings, do NOT proceed to Step 2. `autoCommit` and `postPrComment` never fire.
     - If `failOnError: false` (default) → promote remaining findings to `ESCALATED` status, proceed to Step 2, summary flags the run as partially unresolved.
-12. If `dryRun: true`, run one iteration only and print the findings report. Do not loop, do not auto-fix.
+13. If `dryRun: true`, run one iteration only and print the findings report. Do not loop, do not auto-fix.
 
 ### Step 2: Deliver
 1. Compile summary from `.arp_session_log.json`:
