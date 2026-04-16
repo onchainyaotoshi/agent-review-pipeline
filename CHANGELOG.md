@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.3.1](https://github.com/onchainyaotoshi/agent-review-pipeline/compare/agent-review-pipeline-v6.3.0...agent-review-pipeline-v6.3.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* **arp:** bump to 6.3.0 ([8985967](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/89859674b69328339faf9f68d960aa8dea6742c6))
+
 ## [6.3.0](https://github.com/onchainyaotoshi/agent-review-pipeline/compare/agent-review-pipeline-v6.2.0...agent-review-pipeline-v6.3.0) (2026-04-16)
 
 
