@@ -142,62 +142,83 @@ If LLM call fails, keep all findings (fail-open). Log warning.
 
 ---
 
-## Phase C: Domain Context Injection
+## Phase C: Enhanced Rules Extraction
+
+### Problem with Current Approach
+
+ARP already injects `AGENTS.md`, `CLAUDE.md`, `.claude/rules/*.md`, `CONTRIBUTING.md` from trusted base ref (Step 0, rc15). But these files are dumped verbatim — engines get raw rules with no ARP-specific framing. A rule like "we use CommonJS imports" gets treated same as "always check return types" — no distinction between **style convention** (suppress) and **correctness rule** (enforce).
 
 ### When
 
-Pre-flight (Step 0), before any engine dispatch.
+Pre-flight (Step 0), after reading existing rules files, before engine dispatch.
 
 ### How
 
-1. Look for `arp.context.md` in repo root.
-2. If exists, read contents.
-3. If not, check for `CLAUDE.md` and extract any `## Conventions` or `## Architecture` sections.
-4. Inject into each engine's dispatch prompt as `<domain_context>` block:
+1. After building `.arp_repository_rules.md` (existing step), run one Haiku Agent call to **re-rank and annotate** the rules for review relevance:
 
 ```
-<domain_context>
-Project-specific context. Patterns described here are INTENTIONAL —
-do not flag them as issues unless there's an actual bug.
+You are a code review context optimizer. Given raw repository rules below,
+extract and categorize into:
 
-{content}
-</domain_context>
+1. SUPPRESS rules — patterns that are INTENTIONAL in this codebase.
+   Engines should NOT flag these as issues. (e.g., "we use CommonJS",
+   "controllers follow X layout", "this file is auto-generated")
+2. ENFORCE rules — correctness constraints engines SHOULD check.
+   (e.g., "always validate user input", "never log secrets")
+3. IGNORE — generic dev process rules irrelevant to code review.
+   (e.g., "use conventional commits", "PRs need 2 approvals")
+
+Output JSON only:
+{
+  "suppress": ["rule summary 1", "rule summary 2"],
+  "enforce": ["rule summary 3", "rule summary 4"],
+  "token_count_estimate": N
+}
+
+<raw_rules>
+{.arp_repository_rules.md content}
+</raw_rules>
 ```
 
-5. This context travels with the diff and repository_rules in each engine prompt.
+2. Inject the annotated result into each engine's dispatch prompt:
 
-### File Format: `arp.context.md`
-
-```markdown
-# ARP Domain Context
-
-## Intentional Patterns
-- Express controller layout uses X pattern — this is correct
-- Error handling follows project convention Y
-- File Z is auto-generated — skip review
-
-## Known Constraints
-- Must support Node 18+
-- Database is read-only replica, no write operations expected
-
-## Severity Overrides
-- All dependency updates: LOW (automated by Dependabot)
-- Test-only changes: reduce severity by 1 level
 ```
+<review_context>
+## Patterns that are INTENTIONAL — DO NOT FLAG:
+{suppress rules}
+
+## Correctness constraints — VERIFY THESE:
+{enforce rules}
+</review_context>
+```
+
+3. Replace the existing raw `<repository_rules>` block with this structured version. Same source data, better signal-to-noise for engines.
+
+### Why This Beats a New File
+
+- No new file to maintain — leverages rules teams already write.
+- Smarter extraction: separates suppress-vs-enforce, which raw injection can't do.
+- Falls back gracefully: if Haiku call fails, use existing raw injection.
+- Reduces token waste: strips IGNORE category (dev process rules irrelevant to review).
+
+### Model
+
+Haiku.
+
+### Cost
+
+~500-800 tokens per call. Saves tokens on dispatch by filtering out IGNORE rules.
 
 ### Config
 
 ```json
 {
   "qualityGate": {
-    "contextFile": "arp.context.md"
+    "enhancedRules": true,
+    "rulesModel": "haiku"
   }
 }
 ```
-
-### Cost
-
-Token overhead on dispatch prompts (not additional LLM calls). Estimated +200-500 tokens per dispatch.
 
 ---
 
@@ -212,15 +233,15 @@ All three phases controlled via `plugin.json` userConfig:
     "semanticDedup": true,
     "classifier": true,
     "classifierMinScore": 3,
-    "contextInjection": true,
-    "contextFile": "arp.context.md"
+    "enhancedRules": true,
+    "rulesModel": "haiku"
   }
 }
 ```
 
 - `enabled: false` → skip entire Quality Gate (backward compat).
 - Individual phase toggles for incremental rollout.
-- Defaults: all enabled, `classifierMinScore: 3`, `contextFile: "arp.context.md"`.
+- Defaults: all enabled, `classifierMinScore: 3`, `rulesModel: "haiku"`.
 
 ---
 
@@ -245,8 +266,10 @@ Add to `.arp_session_log.json`:
       "fallback": false
     },
     "phase_c": {
-      "context_file": "arp.context.md",
-      "context_tokens_estimate": 340,
+      "rules_extracted": true,
+      "suppress_count": 4,
+      "enforce_count": 7,
+      "ignored_count": 3,
       "fallback_used": false
     }
   }
