@@ -217,7 +217,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
    **Worktree note (5.2.0-rc1):** Projects that use `git worktree` (e.g., `camis_api_native` keeps worktrees under `.claude/worktrees/`) will run ARP from a worktree directory. Each worktree has its own working tree but shares the parent repo's `.git/objects`. The `gh pr view` and `git show origin/<base>:` calls work identically from any worktree. The flock advisory lock at `.arp.lock` is per-worktree path (each worktree is a separate cwd) — two `/arp` invocations in two worktrees of the same repo will not collide on the lock. This is intentional: each worktree reviews its own branch independently. Operators running concurrent `/arp` with `autoCommit=true` across worktrees should be aware that pushes go to whichever PR each worktree's branch is associated with — there is no cross-worktree coordination.
 7. **Quality Gate Phase C — Enhanced Rules Extraction (v5.6.0).** After building `.arp_repository_rules.md` (step 6 above), run one Haiku Agent call to classify the raw rules into review-relevant categories. This replaces the raw `<repository_rules>` block in engine prompts with a structured `<review_context>` block that separates intentional patterns (suppress) from correctness constraints (enforce) and strips irrelevant dev-process rules (ignore).
 
-   **Gate check:** read `qualityGate` from plugin.json userConfig. If `qualityGate.enhancedRules` is `false`, skip this phase and use existing raw injection. Default: enabled.
+   **Gate check:** read `qualityGate` from plugin.json userConfig. If `qualityGate.enabled` is `false` or `qualityGate.enhancedRules` is `false`, skip this phase and use existing raw injection. Default: enabled.
 
    **Agent dispatch:**
 
@@ -573,7 +573,7 @@ GIT_AFTER=$(snapshot_git)
 
 7. **Quality Gate Phase A — Semantic Dedup (v5.6.0).** After fingerprint-based merge, run one Haiku Agent call to group findings that describe the same underlying issue but differ in wording, severity label, or exact file/line.
 
-   **Gate check:** if `qualityGate.semanticDedup` is `false`, skip.
+   **Gate check:** if `qualityGate.enabled` is `false` or `qualityGate.semanticDedup` is `false`, skip.
 
    **Write findings for classification:**
 
@@ -649,7 +649,7 @@ GIT_AFTER=$(snapshot_git)
 
 8. **Quality Gate Phase B — Finding Classifier (v5.6.0).** After semantic dedup, run one Haiku Agent call to assess whether each finding is a real, actionable issue. Drop noise. Re-rank severity if needed.
 
-   **Gate check:** if `qualityGate.classifier` is `false`, skip.
+   **Gate check:** if `qualityGate.enabled` is `false` or `qualityGate.classifier` is `false`, skip.
 
    **Write findings for classification:**
 
@@ -678,7 +678,8 @@ GIT_AFTER=$(snapshot_git)
    DROPPED_IDS=()
    SEVERITY_OVERRIDES=0
 
-   echo "$AGENT_RESPONSE" | jq -c '.assessments[]?' | while read -r assessment; do
+   # Process substitution (not pipe) so array/counter mutations survive the loop.
+   while read -r assessment; do
      ID=$(echo "$assessment" | jq -r '.id')
      REAL_SCORE=$(echo "$assessment" | jq -r '.real_score')
      SUGGESTED=$(echo "$assessment" | jq -r '.suggested_severity // empty')
@@ -696,7 +697,7 @@ GIT_AFTER=$(snapshot_git)
 
      # Add real_score to finding for debugging
      # Update session log: .findings[] | add real_score field
-   done
+   done < <(echo "$AGENT_RESPONSE" | jq -c '.assessments[]?')
    ```
 
    **Fallback:** if Agent call fails or JSON invalid, keep all findings unchanged.
@@ -750,7 +751,7 @@ GIT_AFTER=$(snapshot_git)
    **Telemetry:** record `{ "redactions_applied": <int>, "kinds": ["api-key", "credential", ...] }` in the session log under a top-level `redactions` field. If `redactions_applied > 0`, append a footer to the PR comment body: *"> Note: N strings matching secret-pattern heuristics were redacted from this comment. The original session log is kept locally (gitignored) for human review."*
 
    **Scope note (rc7):** redaction applies to the PR comment body, parse-error artifacts (scrubbed at write-time, see JSON Robustness step 2), and rotated session logs (scrubbed on rotation, see Step 2.6). The active session log stays raw during the run because kill-switch fingerprint matching reads it back — but it lives in memory of the iteration, is gitignored, and is scrubbed before archival. Live `.arp_*` artifacts in the working directory between iterations should still be treated as sensitive (don't paste, don't upload). Fully runtime-side scrubbing of in-memory dispatch buffers is the only remaining attack surface and is deferred to the runtime-rewrite branch.
-6. Clean up `.arp_stage_prompt.md`, `.arp_pr_context.json`, `.arp_pr_threads.json`, `.arp_repository_rules.md`, and any `.arp_*.tmp` leftovers (rc4 glob fix — the `.arp_pr_context.json.tmp` atomic-write sidecar uses dot-tmp, not underscore; rc3's `.arp_*_tmp` glob silently failed to match so the sidecar could linger across runs), then release both locks via `flock -u 8 2>/dev/null || true; flock -u 9` (then `rm -f .arp.lock`). fd 8 is the PR-scoped lock from Step 0.9 (may be absent if no PR number or not in a git repo); fd 9 is the always-held per-worktree lock from Step 0.4. **Scrub the session log on rotation:** before renaming `.arp_session_log.json` to `.arp_session_log.<timestamp>.json`, run the rc5 scrubber over the JSON file's string values (file content, issue text, fix_code) — the active log stays raw during the run for kill-switch fingerprint matching, but the archived copy is scrubbed so secret material doesn't accumulate across runs. If the scrubber errors, abort rotation rather than archive raw content (matches Step 2.5 fail-closed semantics). Prune `.arp_session_log.*.json`, `.arp_parse_error_*.txt`, and `.arp_benchmark_*.json` older than 7 days from the repo root to prevent unbounded growth.
+6. Clean up `.arp_stage_prompt.md`, `.arp_pr_context.json`, `.arp_pr_threads.json`, `.arp_repository_rules.md`, `.arp_rules_classify_prompt.md`, `.arp_review_context.md`, `.arp_dedup_input.json`, `.arp_classify_input.json`, and any `.arp_*.tmp` leftovers (rc4 glob fix — the `.arp_pr_context.json.tmp` atomic-write sidecar uses dot-tmp, not underscore; rc3's `.arp_*_tmp` glob silently failed to match so the sidecar could linger across runs), then release both locks via `flock -u 8 2>/dev/null || true; flock -u 9` (then `rm -f .arp.lock`). fd 8 is the PR-scoped lock from Step 0.9 (may be absent if no PR number or not in a git repo); fd 9 is the always-held per-worktree lock from Step 0.4. **Scrub the session log on rotation:** before renaming `.arp_session_log.json` to `.arp_session_log.<timestamp>.json`, run the rc5 scrubber over the JSON file's string values (file content, issue text, fix_code) — the active log stays raw during the run for kill-switch fingerprint matching, but the archived copy is scrubbed so secret material doesn't accumulate across runs. If the scrubber errors, abort rotation rather than archive raw content (matches Step 2.5 fail-closed semantics). Prune `.arp_session_log.*.json`, `.arp_parse_error_*.txt`, and `.arp_benchmark_*.json` older than 7 days from the repo root to prevent unbounded growth.
 
 ## Safety Rails
 

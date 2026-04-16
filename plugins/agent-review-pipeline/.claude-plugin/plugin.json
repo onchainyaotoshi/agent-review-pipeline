@@ -1,6 +1,6 @@
 {
   "name": "agent-review-pipeline",
-  "version": "5.5.0",
+  "version": "5.6.0",
   "description": "Autonomous code review pipeline with asymmetric dual-engine dispatch. Codex runs ARP's correctness + adversarial framings (2 dispatches); Gemini runs its own /ce:review compound-engineering pipeline (1 dispatch). Confidence-weighted consensus, bounded auto-fix loop, loop-thrash kill switch, safe-off defaults.",
   "author": {
     "name": "Yaotoshi",
@@ -56,6 +56,12 @@
       "default": {},
       "description": "Three-phase post-dispatch quality filter. Phase A: semantic dedup (groups similar findings across engines). Phase B: classifier (filters false positives, re-ranks severity). Phase C: enhanced rules extraction (categorizes repo rules as suppress/enforce). All phases fail-open. Uses Haiku Agent calls.",
       "properties": {
+        "enabled": {
+          "title": "Quality Gate Enabled",
+          "type": "boolean",
+          "default": true,
+          "description": "Master toggle for the entire Quality Gate. When false, all three phases are skipped (backward compat). Individual phases also have their own toggles."
+        },
         "semanticDedup": {
           "title": "Semantic Dedup",
           "type": "boolean",
