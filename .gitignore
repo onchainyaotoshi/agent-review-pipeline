@@ -13,5 +13,8 @@
 # Gemini CLI workspace cache — may be created inside project root during /ce:review dispatch
 .gemini/
 
+# Fork repo — cloned here for patch work, not part of ARP
+compound-engineering-plugin/
+
 # Git worktrees
 .worktrees/
