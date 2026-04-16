@@ -1,5 +1,35 @@
 # Changelog
 
+## [6.0.0](https://github.com/onchainyaotoshi/agent-review-pipeline/compare/agent-review-pipeline-v5.6.0...agent-review-pipeline-v6.0.0) (2026-04-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **arp:** v5.3.0 — pin Flash + API key Tier 1 + parallel persona dispatch
+
+### Features
+
+* **arp:** 5.2.0-rc1 — PR conversation context + expanded rules glob ([89bc5a9](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/89bc5a90dec27c74ecef4fceec8ea88bbd8de0ed))
+* **arp:** add qualityGate userConfig to plugin.json ([94ec4dc](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/94ec4dc5b50bcdba0a325dab2a26e75d0c596f3a))
+* **arp:** Phase A — semantic dedup via Haiku Agent ([1f88536](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/1f8853616277bc8caf6f350493e13f6aee9f720e))
+* **arp:** Phase B — finding classifier via Haiku Agent ([860d733](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/860d733713c05299ec85dbcb67b0480a998943e6))
+* **arp:** Phase C — enhanced rules extraction ([792f196](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/792f1963b52b78e253e0423022eb04534c6dbaeb))
+* **arp:** update session log schema + pipeline diagram for Quality Gate ([386c5b2](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/386c5b2fe71d8f7d8b9edd942848b4684eab3563))
+* **arp:** v5.3.0 — pin Flash + API key Tier 1 + parallel persona dispatch ([c4aae23](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/c4aae23b4869209ef9bb6c69aacfee5f91bf4c17))
+* **arp:** v5.4.0 — add /arp benchmark subcommand (Flash vs Pro scoring) ([1897f1c](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/1897f1c6f68380bd5e544a7e66ef65c9d07e673e))
+* **arp:** v5.5.0 — remove benchmark subcommand (Flash wins, Pro not worth it) ([eec56e7](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/eec56e79cca75f7743e8af7acf2aeb54ea9b42af))
+
+
+### Bug Fixes
+
+* **arp:** benchmark section — fix 3 quality issues (Flash model, verdict null-branch, dry-run parsing) ([ef0a326](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/ef0a3268b578f9364f08265936038eb37e4274f7))
+* **arp:** code review fixes — version bump, enabled toggle, subshell bug, cleanup ([2f43511](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/2f43511e2399225acb30ef3e875ff038416bd6af))
+* **arp:** update Status block to v5.4.0 ([ba20ec3](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/ba20ec33144c74ee21014f301372808952399765))
+* **arp:** v5.2.1 — close 3 Codex self-review findings from v5.2.0 rc6 dispatch ([12501d8](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/12501d8a70445ac39861aa7a6176eee2fc712c6e))
+* **arp:** v5.3.1 — relax Step 0.3 precheck, trust gemini-cli .env fallback ([7f0da6a](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/7f0da6a627625ce5f33f0f2d646aa500a9e4568d))
+* **arp:** v5.3.2 — snapshot_git filter + Gemini adversarial-push prompt ([a43500e](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/a43500e6f911a9e8c04f0642d40f556ef08e02bc))
+* **arp:** v5.4.1 — GEMINI_API_KEY subshell fix + smoke test + TL;DR ([d1f97e2](https://github.com/onchainyaotoshi/agent-review-pipeline/commit/d1f97e2d904d8907e439460287f06ef5e5a58d12))
+
 ## v5.6.0 — 2026-04-16
 
 **feat: Quality Gate — semantic dedup, finding classifier, enhanced rules**
