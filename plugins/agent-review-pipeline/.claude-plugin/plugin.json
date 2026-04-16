@@ -50,49 +50,41 @@
       "default": false,
       "description": "If true, run review stages and print findings + proposed fixes without applying any Edit, commit, or PR comment."
     },
-    "qualityGate": {
-      "title": "Quality Gate",
-      "type": "object",
-      "default": {},
-      "description": "Three-phase post-dispatch quality filter. Phase A: semantic dedup (groups similar findings across engines). Phase B: classifier (filters false positives, re-ranks severity). Phase C: enhanced rules extraction (categorizes repo rules as suppress/enforce). All phases fail-open. Uses Haiku Agent calls.",
-      "properties": {
-        "enabled": {
-          "title": "Quality Gate Enabled",
-          "type": "boolean",
-          "default": true,
-          "description": "Master toggle for the entire Quality Gate. When false, all three phases are skipped (backward compat). Individual phases also have their own toggles."
-        },
-        "semanticDedup": {
-          "title": "Semantic Dedup",
-          "type": "boolean",
-          "default": true,
-          "description": "Group semantically similar findings across engines via Haiku Agent. Replaces fingerprint-only dedup with LLM-based grouping."
-        },
-        "classifier": {
-          "title": "Finding Classifier",
-          "type": "boolean",
-          "default": true,
-          "description": "Filter false positives and re-rank severity via Haiku Agent. Drops findings below classifierMinScore."
-        },
-        "classifierMinScore": {
-          "title": "Classifier Min Score",
-          "type": "number",
-          "default": 3,
-          "description": "Minimum real_score (1-5) to keep a finding. Higher = stricter filtering. Default 3."
-        },
-        "enhancedRules": {
-          "title": "Enhanced Rules Extraction",
-          "type": "boolean",
-          "default": true,
-          "description": "Categorize repository rules as SUPPRESS/ENFORCE/IGNORE via Haiku Agent before dispatch. Replaces raw rules injection."
-        },
-        "rulesModel": {
-          "title": "Rules Extraction Model",
-          "type": "string",
-          "default": "haiku",
-          "description": "Model for Quality Gate Agent calls. Only 'haiku' supported currently."
-        }
-      }
+    "qualityGateEnabled": {
+      "title": "Quality Gate Enabled",
+      "type": "boolean",
+      "default": true,
+      "description": "Master toggle. When false, all three phases skipped (backward compat)."
+    },
+    "qualityGateSemanticDedup": {
+      "title": "Semantic Dedup",
+      "type": "boolean",
+      "default": true,
+      "description": "Phase A: group similar findings across engines via Haiku Agent."
+    },
+    "qualityGateClassifier": {
+      "title": "Finding Classifier",
+      "type": "boolean",
+      "default": true,
+      "description": "Phase B: filter false positives, re-rank severity. Drops below classifierMinScore."
+    },
+    "qualityGateClassifierMinScore": {
+      "title": "Classifier Min Score",
+      "type": "number",
+      "default": 3,
+      "description": "Min real_score (1-5) to keep. Higher = stricter. Default 3."
+    },
+    "qualityGateEnhancedRules": {
+      "title": "Enhanced Rules Extraction",
+      "type": "boolean",
+      "default": true,
+      "description": "Phase C: categorize repo rules as SUPPRESS/ENFORCE/IGNORE via Haiku Agent."
+    },
+    "qualityGateRulesModel": {
+      "title": "Rules Extraction Model",
+      "type": "string",
+      "default": "haiku",
+      "description": "Model for Quality Gate Agent calls. Only 'haiku' supported."
     }
   }
 }
