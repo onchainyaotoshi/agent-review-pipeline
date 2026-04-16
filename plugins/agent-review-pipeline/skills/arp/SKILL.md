@@ -1,6 +1,6 @@
 ---
 name: arp
-version: 5.6.0
+version: 5.6.1
 description: Autonomous dual-engine code review pipeline. Asymmetric dispatch — Codex runs dual-framing (correctness + adversarial), Gemini runs /ce:review (compound engineering persona pipeline). Fetches PR conversation context (comments, reviews, unresolved threads) for cross-iteration continuity. Dedups by confidence, auto-fixes inline. Supports dry-run. Pinned to Gemini Flash (gemini-3-flash-preview) — empirically proven cost-effective over Pro.
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
@@ -151,6 +151,16 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 
 ### Step 0: Context & Setup
 1. **Flag parsing:** recognize `--dry-run` (or `-d`), `-n N` / `--max-iterations N` (clamp to 1-10), `codex|gemini|both`, PR number. If no PR number is passed, auto-detect the open PR for the current branch via `gh pr view --json number -q .number`; if none exists, abort with *"No PR found for current branch — push and open a PR first, or pass a PR number explicitly"*. Local file-path review is no longer supported (removed in rc8 — PR is the sole review target). **PR number validation (rc15):** validate the resolved number against `^[0-9]+$` before any shell interpolation. Reject with *"Invalid PR number: <n> — must be a positive integer"* if it contains anything else. Blocks shell injection through attacker-supplied PR-number-shaped input.
+
+   ```bash
+   # Dry-run: CLI flag overrides, else read from plugin.json userConfig (v6.1.1 fix)
+   # Skill loader already sets dryRun=true when --dry-run / -d passed.
+   # If not set by CLI, read the config default so plugin.json default=true actually works.
+   if [[ -z "$dryRun" ]]; then
+     dryRun=$(jq -r '.dryRun // false' <userconfig-path> 2>/dev/null || echo false)
+   fi
+   ```
+
 2. **Engine resolution (precedence order, first match wins):**
    - CLI token `codex`, `gemini`, or `both` passed to `/arp`
    - `defaultEngine` from `plugin.json` userConfig
