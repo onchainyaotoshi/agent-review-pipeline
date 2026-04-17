@@ -5,7 +5,7 @@ description: Autonomous dual-engine code review pipeline. Asymmetric dispatch �
 argument-hint: "[--dry-run] [-n N] [codex|gemini|both] [PR number]"
 ---
 
-> **Status:** v6.1.1 — dryRun defaults to true (safe-by-default). v6.0.0: Quality Gate (semantic dedup, classifier, enhanced rules extraction). v5.5.0: removes benchmark subcommand.
+> **Status:** v6.6.0 — Tabular report format required (Step 2.1a) for PR comment + stdout. v6.1.1: dryRun defaults to true (safe-by-default). v6.0.0: Quality Gate (semantic dedup, classifier, enhanced rules extraction). v5.5.0: removes benchmark subcommand.
 
 ## TL;DR
 
@@ -160,7 +160,7 @@ Per-run session log for agreement-rate telemetry and loop-thrash detection. Sche
 1. **Flag parsing:** recognize `--dry-run` (or `-d`), `-n N` / `--max-iterations N` (clamp to 1-10), `codex|gemini|both`, PR number. If no PR number is passed, auto-detect the open PR for the current branch via `gh pr list --head "$CURRENT_BRANCH" --json number,title --jq 'length'`. If count is 0 → abort with *"No PR found for current branch — push and open a PR first, or pass a PR number explicitly"*. If count > 1 → abort with *"Multiple open PRs found for this branch: PR #<n1> (<title1>), PR #<n2> (<title2>) — pass a PR number explicitly to select which one to review"*. If count == 1 → use that PR number. Print a clear header before starting review:
 
 ```
-===== ARP v6.3.2 | PR #<n>: <title> =====
+===== ARP v6.6.0 | PR #<n>: <title> =====
 Mode: dry-run (preview only, no edits)
 Iterations: max <N>
 Quality Gate: Phase A (sem dedup) | Phase B (classifier) | Phase C (rules)
@@ -783,6 +783,98 @@ GIT_AFTER=$(snapshot_git)
    - Per-source parse-error count with artifact path
    - **Quality Gate metrics:** Phase A groups found, dedup savings. Phase B dropped count + severity overrides. Phase C suppress/enforce/ignore counts. Display as separate section in summary output. (e.g. *"gemini:ce-review — 1 parse error, raw at `.arp_parse_error_gemini-ce-review_iter1_*.txt`"*). Do not silent-skip.
    - **Pre-existing partition counts:** total pre-existing, per-engine (codex/gemini), per-severity. Display after actionable metrics. This is how the caller sees "Gemini surfaced 3 pre-existing code smells" without those inflating the actionable count.
+
+1a. **Report format — REQUIRED tabular layout (v6.6.0).** The entire purpose of this dual-engine pipeline is to surface merge/confidence/agreement signal per finding. Free-prose bullet lists hide that signal. Both the stdout summary AND the PR comment body **MUST** use GitHub-flavored markdown tables with the exact columns defined below. Deviation (e.g. "I'll write this in bullets because it's shorter") is a spec violation — the signal is the whole point.
+
+   **Header block (always first, renders above all tables):**
+   ```
+   ## ARP Run — PR #{n} · Iteration {i}/{max}
+   **Engines dispatched:** Codex × 2 (correctness + adversarial) + Gemini × 1 (ce:review)
+   **Dispatch health:** Codex 2/2 OK · Gemini {ok}/1 {parse-error-note-if-any}
+   ```
+
+   **Agreement stats table (always render, even when counts are 0):**
+   ```markdown
+   ### Agreement Stats (actionable findings)
+   | Metric | Count |
+   |---|---|
+   | Actionable findings (pre_existing:false) | {n} |
+   | Both engines agree | {both} |
+   | Codex only | {codex_only} |
+   | Gemini only | {gemini_only} |
+   | Agreement rate | {rate, 2 decimals} |
+   | Escalated (kill switch) | {n} |
+   ```
+
+   **Quality Gate table (only when `qualityGate.enabled`):**
+   ```markdown
+   ### Quality Gate
+   | Phase | Input | Output | Action |
+   |---|---|---|---|
+   | A — Semantic dedup | {input_count} | {deduped_count} | {groups_found} groups merged |
+   | B — Classifier | {input_count} | {kept_count} | {dropped} dropped, {severity_overrides} severity overrides |
+   | C — Enhanced rules | — | — | suppress:{n}, enforce:{n}, ignore:{n} |
+   ```
+
+   **Actionable findings table — the main deliverable:**
+   ```markdown
+   ### Actionable Findings ({count})
+   | # | Sev | File:Line | Engines | Conf | Status | Issue |
+   |---|---|---|---|---|---|---|
+   | 1 | 🔴 critical | `path/to/file.js:43` | codex-adv | 0.99 | ✅ applied | One-line issue summary |
+   | 2 | 🟠 high | `path/to/other.js:12` | codex-adv + codex-corr + gemini | 0.96 | ⏸ deferred | Another one-line summary |
+   ```
+
+   Column rules (strict — do not improvise):
+   - **#** — 1-indexed row number for cross-reference in commit messages / follow-up.
+   - **Sev** — emoji + severity word: 🔴 critical · 🟠 high · 🟡 medium · ⚪ low. Emoji required; label required. Rationale: GitHub markdown renders colored severity at a glance — far faster triage than grep'ing prose.
+   - **File:Line** — backtick-wrapped file path with line number, clickable-style.
+   - **Engines** — `+`-joined list of source labels (from finding's `source` array): `codex-corr`, `codex-adv`, `gemini`. Multi-engine agreement surfaces here directly.
+   - **Conf** — confidence to 2 decimals. This is the single most important column alongside Engines because it surfaces the cross-engine merge bonus (`min(1.0, conf + 0.15 × (sources-1))`).
+   - **Status** — one of: `✅ applied` (fix committed), `⏸ deferred` (intentional skip, explain in Deferred Rationale table), `⚠️ escalated` (loop-thrash kill switch), `🔁 pending` (auto-fix in progress). Exactly one.
+   - **Issue** — ONE LINE, under 120 chars. Collapse multi-line issue text from the session log with `.split('\n').join(' ')` and truncate with `…` if needed. The full text lives in the session log for reviewers who need it.
+
+   **Deferred rationale table (only when any row has Status `⏸ deferred`):**
+   ```markdown
+   ### Deferred Rationale
+   | # | File:Line | Reason |
+   |---|---|---|
+   | 1 | `path:43` | Framework-level issue, not PR-introduced (used by N other pages). |
+   ```
+   `#` matches the Actionable Findings table. Reason must name the concrete blocker (pre-existing, architectural tradeoff, out-of-scope framework issue, awaiting upstream fix) — NOT "low priority" or other judgment words.
+
+   **Pre-existing (out of PR scope) table:**
+   ```markdown
+   <details><summary>Out of PR scope ({count}) — file separately if you want these fixed</summary>
+
+   | # | Sev | File:Line | Engine | Issue |
+   |---|---|---|---|---|
+   | 1 | ⚪ low | `path:12` | gemini | One-line summary |
+
+   </details>
+   ```
+   Collapsible because pre-existing findings shouldn't consume reviewer attention by default.
+
+   **Parse errors table (only when parse_errors count > 0):**
+   ```markdown
+   ### Parse Errors
+   | Source | Iteration | Artifact |
+   |---|---|---|
+   | gemini:ce-review | 2 | `.arp_parse_error_gemini-ce-review_iter2_1713195845.txt` |
+   ```
+
+   **Footer:**
+   ```
+   ---
+   🤖 Posted by ARP · commit `{sha}` · {timestamp ISO8601}
+   ```
+
+   **Generation discipline:**
+   - Data source: `.arp_session_log.json` only. If a field is missing (e.g., legacy log without `quality_gate`), omit that table — do not fabricate.
+   - No free-prose executive summaries before or between tables. A one-line header is OK; paragraphs are not.
+   - If actionable count is 0 AND pre-existing count is 0: emit only the header block + "No findings." Skip all tables.
+   - Same template applies to stdout and PR comment body — identical content, different sink.
+
 2. Print summary to stdout always.
 3. If `dryRun: true`: stop — do not commit, do not post.
 4. If `autoCommit: true`: execute `git add -u` (modifications to tracked files only — NOT `git add .` which would sweep in unrelated untracked files like editor backups, secrets, or developer scratch) and `git commit -m "chore(arp): autonomous review fixes"`. Off by default.
